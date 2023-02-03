@@ -34,7 +34,7 @@ class GPTran(nn.Module):
             aux_loss: True if auxiliary decoding losses (loss at each decoder layer) are to be used.
         """
         super().__init__()
-        self.num_queries = num_queries
+        # self.num_queries = num_queries
         self.transformer = transformer
 
         self.use_structure_tensor = use_structure_tensor
@@ -80,7 +80,6 @@ class GPTran(nn.Module):
         hs, memory, enc_attn, dec_self_attn, dec_cross_attn = self.transformer(
             src=self.input_proj(src),
             mask=mask,
-            query_embed=self.query_embed.weight,
             tgt=self.input_line_proj(lines),
             tgt_key_padding_mask=lmask,
             pos_embed=pos[-1],
