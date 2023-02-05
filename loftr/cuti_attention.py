@@ -28,7 +28,7 @@ class CuTiSelfAttention(Module):
         kdim=None,
         vdim=None,
     ):
-        super(MultiheadAttention, self).__init__()
+        super(CuTiSelfAttention, self).__init__()
         self.embed_dim = embed_dim
         self.kdim = kdim if kdim is not None else embed_dim
         self.vdim = vdim if vdim is not None else embed_dim
@@ -97,7 +97,7 @@ class CuTiSelfAttention(Module):
         if "_qkv_same_embed_dim" not in state:
             state["_qkv_same_embed_dim"] = True
 
-        super(MultiheadAttention, self).__setstate__(state)
+        super(CuTiSelfAttention, self).__setstate__(state)
 
     def forward(
         self,
@@ -483,7 +483,7 @@ class CuTiCrossAttention(Module):
         kdim=None,
         vdim=None,
     ):
-        super(MultiheadAttention, self).__init__()
+        super(CuTiCrossAttention, self).__init__()
         self.embed_dim = embed_dim
         self.kdim = kdim if kdim is not None else embed_dim
         self.vdim = vdim if vdim is not None else embed_dim
@@ -552,7 +552,7 @@ class CuTiCrossAttention(Module):
         if "_qkv_same_embed_dim" not in state:
             state["_qkv_same_embed_dim"] = True
 
-        super(MultiheadAttention, self).__setstate__(state)
+        super(CuTiCrossAttention, self).__setstate__(state)
 
     def forward(
         self,
