@@ -1,2 +1,5 @@
 ## 폴더 무시
 matterport/
+
+## 파일 무시
+nohup.out

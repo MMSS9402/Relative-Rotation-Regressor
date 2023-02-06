@@ -90,7 +90,7 @@ class GPTran(nn.Module):
         extra_info["dec_self_attns"] = dec_self_attn
         extra_info["dec_cross_attns"] = dec_cross_attn
 
-        return hs  # , extra_info
+        return hs , extra_info
 
     def _to_structure_tensor(self, params):
         (a, b, c) = torch.unbind(params, dim=-1)

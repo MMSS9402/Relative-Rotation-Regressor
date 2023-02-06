@@ -96,9 +96,9 @@ class Transformer(nn.Module):
             pos=pos_embed,
             query_pos=query_pos,
         )
-        # enc_attn_weights [enc_ayer, bs, nhead, h*w, h*w]
-        # dec_attn_weights [dec_ayer, bs, nhead, n_qeury, h*w]
-        # import pdb; pdb.set_trace()
+        enc_attn_weights [enc_ayer, bs, nhead, h*w, h*w]
+        dec_attn_weights [dec_ayer, bs, nhead, n_qeury, h*w]
+        import pdb; pdb.set_trace()
 
         return (
             hs.transpose(1, 2),  # hs [dec_ayer, bs, n, ch]
