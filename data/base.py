@@ -16,34 +16,6 @@ import time
 from .augmentation import RGBDAugmentor
 
 
-def read_line_file(filename, min_line_length=10):
-    segs = []  # line segments
-    # csv 파일 열어서 Line 정보 가져오기
-    with open(filename, "r") as csvfile:
-        csvreader = csv.reader(csvfile)
-        for row in csvreader:
-            segs.append([float(row[0]), float(row[1]), float(row[2]), float(row[3])])
-    segs = np.array(segs, dtype=np.float32)
-    lengths = LA.norm(segs[:, 2:] - segs[:, :2], axis=1)
-    segs = segs[lengths > min_line_length]
-    return segs
-
-
-def normalize_safe_np(v, axis=-1, eps=1e-6):
-    de = LA.norm(v, axis=axis, keepdims=True)
-    de = np.maximum(de, eps)
-    return v / de
-
-
-def segs2lines_np(segs):
-    ones = np.ones(len(segs))
-    ones = np.expand_dims(ones, axis=-1)
-    p1 = np.concatenate([segs[:, :2], ones], axis=-1)
-    p2 = np.concatenate([segs[:, 2:], ones], axis=-1)
-    lines = np.cross(p1, p2)
-    return normalize_safe_np(lines)
-
-
 class RGBDDataset(data.Dataset):
     def __init__(
         self,
@@ -80,13 +52,41 @@ class RGBDDataset(data.Dataset):
     def image_read(image_file):
         return cv2.imread(image_file)
 
+    def read_line_file(self,filename, min_line_length=10):
+        segs = []  # line segments
+        # csv 파일 열어서 Line 정보 가져오기
+        print("filename:",filename)
+        with open(str(filename), "r") as csvfile:
+            csvreader = csv.reader(csvfile)
+            for row in csvreader:
+                segs.append([float(row[0]), float(row[1]), float(row[2]), float(row[3])])
+        segs = np.array(segs, dtype=np.float32)
+        lengths = LA.norm(segs[:, 2:] - segs[:, :2], axis=1)
+        segs = segs[lengths > min_line_length]
+        return segs
+
+
+    def normalize_safe_np(self,v, axis=-1, eps=1e-6):
+        de = LA.norm(v, axis=axis, keepdims=True)
+        de = np.maximum(de, eps)
+        return v / de
+
+
+    def segs2lines_np(self,segs):
+        ones = np.ones(len(segs))
+        ones = np.expand_dims(ones, axis=-1)
+        p1 = np.concatenate([segs[:, :2], ones], axis=-1)
+        p2 = np.concatenate([segs[:, 2:], ones], axis=-1)
+        lines = np.cross(p1, p2)
+        return self.normalize_safe_np(lines)
+
     def __getitem__(self, index):
         """return training video"""
         if self.matterport:
             images_list = self.scene_info["images"][index]
             poses = self.scene_info["poses"][index]
             intrinsics = self.scene_info["intrinsics"][index]
-            lines = self.scene_info["lines"][index]
+            lines_list = self.scene_info["lines"][index]
 
             images = []
             for i in range(2):
@@ -103,9 +103,9 @@ class RGBDDataset(data.Dataset):
 
             poses = torch.from_numpy(poses)
             intrinsics = torch.from_numpy(intrinsics)
-
-            lines = read_line_file(lines, 10)
-
+            lines = []
+            for i in range(2):
+                lines.append(self.read_line_file(lines_list[i],10))  
             images, poses, intrinsics, lines = self.aug(
                 images, poses, intrinsics, lines
             )
@@ -119,11 +119,13 @@ class RGBDDataset(data.Dataset):
                     images_list = self.scene_info["images"][local_index]
                     poses = self.scene_info["poses"][local_index]
                     intrinsics = self.scene_info["intrinsics"][local_index]
+                    lines_list = self.scene_info["lines"][local_index]
 
                     images = []
+                    
                     for i in range(2):
                         images.append(self.__class__.image_read(images_list[i]))
-
+                    print("out2:", images)
                     poses = np.stack(poses).astype(np.float32)
                     intrinsics = np.stack(intrinsics).astype(np.float32)
 
@@ -133,8 +135,10 @@ class RGBDDataset(data.Dataset):
 
                     poses = torch.from_numpy(poses)
                     intrinsics = torch.from_numpy(intrinsics)
-
-                    lines = read_line_file(lines, 10)
+                    lines = []
+                    print("lines_list:",lines_list)
+                    for i in range(2):
+                        lines.append(self.__class__.read_line_file(lines_list[i], 10))
 
                     images, poses, intrinsics, lines = self.aug(
                         images, poses, intrinsics, lines

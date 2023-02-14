@@ -26,7 +26,7 @@ for i in tqdm(range(len(split["data"]))):
             root,
             "/".join(str(split["data"][i][imgnum]["file_name"]).split("/")[6:]),
         )
-        #print(img_name)
+        print(img_name)
         
         
 

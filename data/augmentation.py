@@ -4,6 +4,8 @@ import numpy as np
 import numpy.linalg as LA
 import torch.nn.functional as F
 
+from data import transforms as T
+
 
 class RGBDAugmentor:
     """perform augmentation on RGB-D video"""
@@ -21,6 +23,9 @@ class RGBDAugmentor:
                 transforms.ToTensor(),
             ]
         )
+        # self.linetrans = transforms.Compose(
+        #                             [T.ToTensor(), T.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])]
+                                # )
 
     def color_transform(self, images):
         """color jittering"""
@@ -77,9 +82,14 @@ class RGBDAugmentor:
         pp = (images.shape[-2] / 2, images.shape[-1] / 2)
         rho = 2.0 / np.minimum(images.shape[-2], images.shape[-1])
 
-        lines = self.normalize_segs(lines, pp=pp, rho=rho)
-        lines = self.sample_segs_np(lines, 512)
-        lines = self.segs2lines_np(lines)
+        lines[0] = self.normalize_segs(lines[0], pp=pp, rho=rho)
+        lines[0] = self.sample_segs_np(lines[0], 512)
+        lines[0] = self.segs2lines_np(lines[0])
+
+        lines[1] = self.normalize_segs(lines[1], pp=pp, rho=rho)
+        lines[1] = self.sample_segs_np(lines[1], 512)
+        lines[1] = self.segs2lines_np(lines[1])
 
         images = F.interpolate(images, size=self.reshape_size)
+        lines = np.array(lines)
         return images, poses, intrinsics, lines

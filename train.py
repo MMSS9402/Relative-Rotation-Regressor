@@ -6,6 +6,7 @@ import torch
 import torch.optim as optim
 from torch.utils.data import DataLoader
 from .data import dataset_factory
+from config import cfg
 
 # import lietorch
 # from lietorch import SE3
@@ -14,6 +15,7 @@ from .data import dataset_factory
 # network
 # from src.model import ViTEss
 from .logger import Logger
+from cuti import build
 
 # DDP training
 import torch.multiprocessing as mp
@@ -51,20 +53,20 @@ def train(gpu, args):
         args.map_location = ""
         thiscuda = "cuda:0"
 
-    model = ViTEss(args)
+    model = build(args)
 
-    model.to(thiscuda)
+    model.to(thiscuda) 
     model.train()
 
-    # unused layers
-    for param in model.resnet.layer4.parameters():
-        param.requires_grad = False
+    # # unused layers
+    # for param in model.resnet.layer4.parameters():
+    #     param.requires_grad = False
 
-    for param in model.resnet.layer3.parameters():
-        param.requires_grad = False
+    # for param in model.resnet.layer3.parameters():
+    #     param.requires_grad = False
 
-    if not args.no_ddp:
-        model = DDP(model, device_ids=[gpu], find_unused_parameters=False)
+    # if not args.no_ddp:
+    #     model = DDP(model, device_ids=[gpu], find_unused_parameters=False)
 
     optimizer = torch.optim.Adam(
         model.parameters(), lr=args.lr, weight_decay=args.weight_decay
@@ -166,11 +168,12 @@ def train(gpu, args):
             for i_batch, item in enumerate(tepoch):
                 optimizer.zero_grad()
 
-                images, poses, intrinsics = [x.to("cuda") for x in item]
-                Ps = SE3(poses)
-                Gs = SE3.IdentityLike(Ps)
-                Ps_out = SE3(Ps.data.clone())
-
+                images, poses, intrinsics, lines = [x.to("cuda") for x in item]
+                # Ps = SE3(poses)
+                # Gs = SE3.IdentityLike(Ps)
+                # Ps_out = SE3(Ps.data.clone())
+                Ps_out = SE3(poses)
+                MSE_loss = torch.nn.MSELoss(size_average=None, reduce=None, reduction='mean')
                 metrics = {}
 
                 if not is_training:
