@@ -55,7 +55,7 @@ class RGBDDataset(data.Dataset):
     def read_line_file(self,filename, min_line_length=10):
         segs = []  # line segments
         # csv 파일 열어서 Line 정보 가져오기
-        print("filename:",filename)
+        
         with open(str(filename), "r") as csvfile:
             csvreader = csv.reader(csvfile)
             for row in csvreader:
@@ -105,7 +105,7 @@ class RGBDDataset(data.Dataset):
             intrinsics = torch.from_numpy(intrinsics)
             lines = []
             for i in range(2):
-                lines.append(self.read_line_file(lines_list[i],10))  
+                lines.append(self.read_line_file(lines_list[i],10)) 
             images, poses, intrinsics, lines = self.aug(
                 images, poses, intrinsics, lines
             )
@@ -125,7 +125,7 @@ class RGBDDataset(data.Dataset):
                     
                     for i in range(2):
                         images.append(self.__class__.image_read(images_list[i]))
-                    print("out2:", images)
+                    
                     poses = np.stack(poses).astype(np.float32)
                     intrinsics = np.stack(intrinsics).astype(np.float32)
 
@@ -136,7 +136,8 @@ class RGBDDataset(data.Dataset):
                     poses = torch.from_numpy(poses)
                     intrinsics = torch.from_numpy(intrinsics)
                     lines = []
-                    print("lines_list:",lines_list)
+                   
+                   
                     for i in range(2):
                         lines.append(self.__class__.read_line_file(lines_list[i], 10))
 

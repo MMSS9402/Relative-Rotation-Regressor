@@ -8,6 +8,8 @@ from typing import Tuple, Optional
 from . import cuti_attention as mca
 
 
+
+
 def _get_activation_fn(activation):
     """Return an activation function given a string"""
     if activation == "relu":
@@ -57,6 +59,9 @@ class CuTiDecoderLayer(nn.Module):
 
         self.activation = _get_activation_fn(activation)
         self.normalize_before = normalize_before
+    
+    def with_pos_embed(self, tensor, pos: Optional[Tensor]):
+        return tensor if pos is None else tensor + pos
 
     def forward(
         self,
@@ -101,11 +106,11 @@ class CuTiDecoderLayer(nn.Module):
 class CuTiTransformer(nn.Module):
     """A Local Feature Transformer (LoFTR) module."""
 
-    def __init__(self, decoder_layer, num_layers, norm=None, return_intermediate=False):
+    def __init__(self, decoder_layer, num_layers=6, norm=None, return_intermediate=False):
         super().__init__()
         # Decoder layer를 갯수만큼 Deepcopy로 복제해서 modulelist로 받아옵니다.
-        self.layers = _get_clones(decoder_layer, num_layers)
         self.num_layers = num_layers
+        self.layers = _get_clones(decoder_layer, num_layers)
         self.norm = norm
         self.return_intermediate = return_intermediate
 
@@ -129,7 +134,7 @@ class CuTiTransformer(nn.Module):
 
         # decoder layer를 반복하면서 이전 layer의 output 출력을 이후 layer에 넣어줌
         for layer in self.layers:
-            output, self_attn_weight, cross_attn_weight = layer(
+            output = layer(
                 output,
                 memory,
                 tgt_mask=tgt_mask,
@@ -143,21 +148,21 @@ class CuTiTransformer(nn.Module):
             # 마지막 output을 출력할 때 FFN를 5개를 써서 출력하기 때문에
             # 이걸 각각 loss를 나눠서 주려면 intermediate가 필요한 것이 아닐까..?
 
-            if self.return_intermediate:
-                intermediate.append(self.norm(output))
-            self_attn_weights.append(self_attn_weight)
-            cross_attn_weights.append(cross_attn_weight)
-        self_attn_weights = torch.stack(self_attn_weights)
-        cross_attn_weights = torch.stack(cross_attn_weights)
+        #     if self.return_intermediate:
+        #         intermediate.append(self.norm(output))
+        #     #self_attn_weights.append(self_attn_weight)
+        #     #cross_attn_weights.append(cross_attn_weight)
+        # #self_attn_weights = torch.stack(self_attn_weights)
+        # #cross_attn_weights = torch.stack(cross_attn_weights)
 
-        if self.norm is not None:
-            output = self.norm(output)
-            if self.return_intermediate:
-                intermediate.pop()
-                intermediate.append(output)
+        # if self.norm is not None:
+        #     output = self.norm(output)
+        #     if self.return_intermediate:
+        #         intermediate.pop()
+        #         intermediate.append(output)
 
-        if self.return_intermediate:
-            return torch.stack(intermediate), self_attn_weights, cross_attn_weights
+        # if self.return_intermediate:
+        #     return torch.stack(intermediate), self_attn_weights, cross_attn_weights
 
         return output.unsqueeze(0) #, self_attn_weights, cross_attn_weights
 

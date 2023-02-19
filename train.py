@@ -5,16 +5,17 @@ import cv2
 import torch
 import torch.optim as optim
 from torch.utils.data import DataLoader
-from .data import dataset_factory
+from data.factory import dataset_factory
 from config import cfg
 
-# import lietorch
-# from lietorch import SE3
+import lietorch
+from lietorch import SE3
+from geom.losses import geodesic_loss
 # from src.geom.losses import geodesic_loss
 
 # network
 # from src.model import ViTEss
-from .logger import Logger
+from logger import Logger
 from cuti import build
 
 # DDP training
@@ -28,20 +29,28 @@ from datetime import datetime
 import os
 
 
+
+
+#DDP(Distributed Data Parallel)을 사용하기 위한 세팅 단계 (arg.parse하고 같이 많이 사용)
 def setup_ddp(gpu, args):
+    # torch.distributed를 사용하기 위해서 초기화
+    # process_group은 gpu 간 통신을 통해서 gradient를 계산하고 업데이트 하는 녀석
+    # nccl은 nvidia의 통신 라이브러리
     dist.init_process_group(
         backend="nccl", init_method="env://", world_size=args.world_size, rank=gpu
     )
+    
 
-    torch.manual_seed(0)
-    torch.cuda.set_device(gpu)
+    torch.manual_seed(0) # random seed 고정
+    torch.cuda.set_device(gpu) # local_rank 세팅
+
 
 
 def train(gpu, args):
     """Test to make sure project transform correctly maps points"""
 
     # coordinate multiple GPUs
-    if not args.no_ddp:
+    if not args.no_ddp:#True
         setup_ddp(gpu, args)
     rng = np.random.default_rng(12345)
     random.seed(0)
@@ -53,7 +62,7 @@ def train(gpu, args):
         args.map_location = ""
         thiscuda = "cuda:0"
 
-    model = build(args)
+    model = build(cfg)
 
     model.to(thiscuda) 
     model.train()
@@ -65,8 +74,8 @@ def train(gpu, args):
     # for param in model.resnet.layer3.parameters():
     #     param.requires_grad = False
 
-    # if not args.no_ddp:
-    #     model = DDP(model, device_ids=[gpu], find_unused_parameters=False)
+    if not args.no_ddp:
+        model = DDP(model, device_ids=[gpu], find_unused_parameters=False)
 
     optimizer = torch.optim.Adam(
         model.parameters(), lr=args.lr, weight_decay=args.weight_decay
@@ -149,14 +158,14 @@ def train(gpu, args):
             )
             train_loader = DataLoader(
                 db,
-                batch_size=args.batch,
+                batch_size=cfg.SOLVER.BATCH_SIZE,
                 sampler=train_sampler,
                 num_workers=args.num_workers,
                 pin_memory=True,
             )
         else:
             train_loader = DataLoader(
-                db, batch_size=args.batch, num_workers=1, shuffle=False
+                db, batch_size=cfg.SOLVER.BATCH_SIZE, num_workers=1, shuffle=False
             )
 
         model.train()
@@ -169,24 +178,20 @@ def train(gpu, args):
                 optimizer.zero_grad()
 
                 images, poses, intrinsics, lines = [x.to("cuda") for x in item]
-                # Ps = SE3(poses)
-                # Gs = SE3.IdentityLike(Ps)
-                # Ps_out = SE3(Ps.data.clone())
-                Ps_out = SE3(poses)
-                MSE_loss = torch.nn.MSELoss(size_average=None, reduce=None, reduction='mean')
+                Ps = SE3(poses)
+                Gs = SE3.IdentityLike(Ps)
+                Ps_out = SE3(Ps.data.clone())
+                
+                #MSE_loss = torch.nn.MSELoss(size_average=None, reduce=None, reduction='mean')
                 metrics = {}
 
                 if not is_training:
                     with torch.no_grad():
-                        poses_est = model(images, Gs, intrinsics=intrinsics)
-                        geo_loss_tr, geo_loss_rot, geo_metrics = geodesic_loss(
-                            Ps_out, poses_est, train_val=train_val
-                        )
+                        poses_est = model(images, lines, Gs)
+                        geo_loss_tr, geo_loss_rot, geo_metrics = geodesic_loss(Ps_out, poses_est, train_val=train_val)
                 else:
-                    poses_est = model(images, Gs, intrinsics=intrinsics)
-                    geo_loss_tr, geo_loss_rot, geo_metrics = geodesic_loss(
-                        Ps_out, poses_est, train_val=train_val
-                    )
+                    poses_est = model(images, lines,Gs)
+                    geo_loss_tr, geo_loss_rot, geo_metrics = geodesic_loss(Ps_out, poses_est, train_val=train_val)
 
                     loss = args.w_tr * geo_loss_tr + args.w_rot * geo_loss_rot
 
@@ -265,14 +270,13 @@ if __name__ == "__main__":
     parser.add_argument("--w_tr", type=float, default=10.0)
     parser.add_argument("--w_rot", type=float, default=10.0)
     parser.add_argument("--warmup", type=int, default=10000)
-    parser.add_argument("--batch", type=int, default=1)
     parser.add_argument("--steps", type=int, default=120000)
     parser.add_argument("--lr", type=float, default=5e-4)
     parser.add_argument("--clip", type=float, default=2.5)
     parser.add_argument("--weight_decay", type=float, default=1e-5)
-    parser.add_argument("--num_workers", type=int, default=4)
-    parser.add_argument("--no_ddp", action="store_true", default=False)
-    parser.add_argument("--gpus", type=int, default=4)
+    parser.add_argument("--num_workers", type=int, default=1)
+    parser.add_argument("--no_ddp", action="store_true", default=True)
+    parser.add_argument("--gpus", type=int, default=0)
     parser.add_argument("--ckpt", help="checkpoint to restore")
     parser.add_argument("--name", default="bla", help="name your experiment")
     # data
@@ -287,7 +291,7 @@ if __name__ == "__main__":
         choices=("matterport", "interiornet", "streetlearn"),
     )
 
-    # model
+    #model
     parser.add_argument("--no_pos_encoding", action="store_true")
     parser.add_argument("--noess", action="store_true")
     parser.add_argument("--cross_features", action="store_true")

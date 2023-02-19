@@ -81,7 +81,6 @@ class RGBDAugmentor:
 
         pp = (images.shape[-2] / 2, images.shape[-1] / 2)
         rho = 2.0 / np.minimum(images.shape[-2], images.shape[-1])
-
         lines[0] = self.normalize_segs(lines[0], pp=pp, rho=rho)
         lines[0] = self.sample_segs_np(lines[0], 512)
         lines[0] = self.segs2lines_np(lines[0])
@@ -92,4 +91,5 @@ class RGBDAugmentor:
 
         images = F.interpolate(images, size=self.reshape_size)
         lines = np.array(lines)
+        print("augmentation:",lines.shape)
         return images, poses, intrinsics, lines

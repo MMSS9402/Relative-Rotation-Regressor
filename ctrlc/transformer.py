@@ -61,30 +61,16 @@ class Transformer(nn.Module):
             if p.dim() > 1:
                 nn.init.xavier_uniform_(p)
 
-    def forward(self, src, mask, query_embed, tgt, tgt_key_padding_mask, pos_embed):
+    def forward(self, src, mask, tgt, tgt_key_padding_mask, pos_embed):
         # flatten NxCxHxW to HWxNxC
-        num_queries = query_embed.size(0) + tgt.size(1)
+        num_queries = tgt.size(1)
 
         bs, c, h, w = src.shape
         src = src.flatten(2).permute(
             2, 0, 1
         )  # flattem(2) -> [bs, c , h*w] -> permute(2,0,1) -> [h*w,bs,c]
         pos_embed = pos_embed.flatten(2).permute(2, 0, 1)  # [h*w,bs,c]
-        query_embed = query_embed.unsqueeze(1).repeat(
-            1, bs, 1
-        )  # [num_query, bs, hidden_dim]
         tgt = tgt.permute(1, 0, 2)
-        query_pos = torch.cat([query_embed, torch.zeros_like(tgt)], dim=0)
-        tgt = torch.cat([torch.zeros_like(query_embed), tgt], dim=0)  # [n, bs, ch]
-        tgt_key_padding_mask = torch.cat(
-            [
-                torch.zeros(
-                    bs, query_embed.size(0), dtype=torch.bool, device=query_embed.device
-                ),
-                tgt_key_padding_mask,
-            ],
-            dim=1,
-        )
         mask = mask.flatten(1)  # [h*w]
 
         memory, enc_attns = self.encoder(src, src_key_padding_mask=mask, pos=pos_embed)
@@ -93,12 +79,10 @@ class Transformer(nn.Module):
             memory,
             tgt_key_padding_mask=tgt_key_padding_mask,
             memory_key_padding_mask=mask,
-            pos=pos_embed,
-            query_pos=query_pos,
+            pos=pos_embed,   
         )
-        enc_attn_weights [enc_ayer, bs, nhead, h*w, h*w]
-        dec_attn_weights [dec_ayer, bs, nhead, n_qeury, h*w]
-        import pdb; pdb.set_trace()
+
+        #import pdb; pdb.set_trace()
 
         return (
             hs.transpose(1, 2),  # hs [dec_ayer, bs, n, ch]

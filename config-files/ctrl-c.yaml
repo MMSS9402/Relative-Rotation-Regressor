@@ -15,18 +15,13 @@ MODELS:
     PRE_NORM: False
 
 LOSS:
-  LOSSES: ['zvp','fovy','hl', 'vline_labels', 'hline_labels', 'hline_labels2']
+  LOSSES: ['MSE_LOSS']
   AUX_LOSS: False
   LINE_POS_ANGLE: 88.0
   LINE_NEG_ANGLE: 85.0
   
   WEIGHTS:
-    loss_zvp: 1.0 
-    loss_fovy: 1.0 
-    loss_hl: 1.0 
-    loss_vline_ce: 1.0 
-    loss_hline_ce: 1.0
-    loss_hline2_ce: 1.0 
+    MSE_LOSS : 1.0 
     
 DATASETS:
   INPUT_WIDTH: 512
@@ -39,7 +34,7 @@ DATASETS:
 SOLVER:
   LR: 0.0001
   LR_BACKBONE: 0.0001
-  BATCH_SIZE: 6
+  BATCH_SIZE: 1
   WEIGHT_DECAY: 0.0001
   EPOCHS: 30
   LR_DROP: 20

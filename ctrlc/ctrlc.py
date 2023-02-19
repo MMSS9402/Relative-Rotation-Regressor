@@ -43,7 +43,7 @@ class GPTran(nn.Module):
 
         self.input_proj = nn.Conv2d(backbone.num_channels, hidden_dim, kernel_size=1)
         # query embedding은 nn모듈에서 가져다가 쓴다...
-        self.query_embed = nn.Embedding(num_queries, hidden_dim)
+        # self.query_embed = nn.Embedding(num_queries, hidden_dim)
         line_dim = 3
         if self.use_structure_tensor:
             line_dim = 6
@@ -59,17 +59,23 @@ class GPTran(nn.Module):
         """
         extra_info = {}
         # import pdb; pdb.set_trace()
+        print("image_shaep:",samples.shape)
         if isinstance(samples, (list, torch.Tensor)):
             # samples는 배치 단위 이미지
             samples = nested_tensor_from_tensor_list(samples)
         # 이미지를 backbone을 통과시켜 feature 뽑고
+        
         features, pos = self.backbone(samples)
 
         # feature 펴서 src 만들기
         src, mask = features[-1].decompose()
         assert mask is not None
-        lines = extra_samples["lines"]
-        lmask = ~extra_samples["line_mask"].squeeze(2).bool()
+        
+        print("ctrlc.shape:",extra_samples.shape)
+        extra_samples = torch.tensor(extra_samples, dtype = torch.float32)
+        lines = extra_samples
+        
+        lmask = ~extra_samples.squeeze(2).bool()
 
         # vlines [bs, n, 3]
         if self.use_structure_tensor:
@@ -81,16 +87,16 @@ class GPTran(nn.Module):
             src=self.input_proj(src),
             mask=mask,
             tgt=self.input_line_proj(lines),
-            tgt_key_padding_mask=lmask,
+            tgt_key_padding_mask=None,
             pos_embed=pos[-1],
         )
         # ha [n_dec_layer, bs, num_query, ch]
 
-        extra_info["enc_attns"] = enc_attn
-        extra_info["dec_self_attns"] = dec_self_attn
-        extra_info["dec_cross_attns"] = dec_cross_attn
+        # extra_info["enc_attns"] = enc_attn
+        # extra_info["dec_self_attns"] = dec_self_attn
+        # extra_info["dec_cross_attns"] = dec_cross_attn
 
-        return hs , extra_info
+        return hs 
 
     def _to_structure_tensor(self, params):
         (a, b, c) = torch.unbind(params, dim=-1)
