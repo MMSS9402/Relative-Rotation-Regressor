@@ -1,5 +1,9 @@
 ## 폴더 무시
 matterport/
+logs/
+output/
+wandb/
+__pycache__/
 
 ## 파일 무시
 nohup.out

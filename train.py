@@ -1,4 +1,5 @@
 import numpy as np
+import wandb
 from collections import OrderedDict
 
 import cv2
@@ -63,6 +64,7 @@ def train(gpu, args):
         thiscuda = "cuda:0"
 
     model = build(cfg)
+    wandb.watch(model)
 
     model.to(thiscuda) 
     model.train()
@@ -77,7 +79,7 @@ def train(gpu, args):
     if not args.no_ddp:
         model = DDP(model, device_ids=[gpu], find_unused_parameters=False)
 
-    optimizer = torch.optim.Adam(
+    optimizer = torch.optim.SGD(
         model.parameters(), lr=args.lr, weight_decay=args.weight_decay
     )
 
@@ -218,6 +220,10 @@ def train(gpu, args):
                             print(Ps_out.data[0, :7, :].cpu().detach())
                             print("")
                     if (i_batch + 10) % 20 == 0:
+                        wandb.log({
+                            'metrics' : metrics
+                            
+                        })
                         print("\n metrics:", metrics, "\n")
                     if i_batch % 100 == 0:
                         print("epoch", str(epoch_count))
@@ -236,6 +242,7 @@ def train(gpu, args):
                         "scheduler": scheduler.state_dict(),
                     }
                     torch.save(checkpoint, PATH)
+                #if(train_steps == )
 
                 if train_steps >= args.steps:
                     PATH = "output/%s/checkpoints/%06d.pth" % (args.name, train_steps)
@@ -262,6 +269,7 @@ def train(gpu, args):
 
 
 if __name__ == "__main__":
+    wandb.init()
     import argparse
 
     parser = argparse.ArgumentParser()
@@ -301,9 +309,10 @@ if __name__ == "__main__":
     parser.add_argument("--fc_hidden_size", type=int, default=512)
     parser.add_argument("--pool_size", type=int, default=60)
     parser.add_argument("--transformer_depth", type=int, default=6)
-
+    
     args = parser.parse_args()
 
+    wandb.config.update(args)
     print(args)
 
     PATHS = [

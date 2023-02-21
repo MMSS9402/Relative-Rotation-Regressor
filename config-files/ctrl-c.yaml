@@ -14,8 +14,9 @@ MODELS:
     NUM_QUERIES: 3
     PRE_NORM: False
 
+
 LOSS:
-  LOSSES: ['MSE_LOSS']
+  LOSSES: ['geodesic_loss']
   AUX_LOSS: False
   LINE_POS_ANGLE: 88.0
   LINE_NEG_ANGLE: 85.0

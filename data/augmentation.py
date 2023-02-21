@@ -91,5 +91,5 @@ class RGBDAugmentor:
 
         images = F.interpolate(images, size=self.reshape_size)
         lines = np.array(lines)
-        print("augmentation:",lines.shape)
+        #print("augmentation:",lines.shape)
         return images, poses, intrinsics, lines

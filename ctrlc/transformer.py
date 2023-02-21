@@ -73,8 +73,8 @@ class Transformer(nn.Module):
         tgt = tgt.permute(1, 0, 2)
         mask = mask.flatten(1)  # [h*w]
 
-        memory, enc_attns = self.encoder(src, src_key_padding_mask=mask, pos=pos_embed)
-        hs, dec_self_attns, dec_cross_attns = self.decoder(
+        memory = self.encoder(src, src_key_padding_mask=mask, pos=pos_embed)
+        hs = self.decoder(
             tgt,
             memory,
             tgt_key_padding_mask=tgt_key_padding_mask,
@@ -86,16 +86,7 @@ class Transformer(nn.Module):
 
         return (
             hs.transpose(1, 2),  # hs [dec_ayer, bs, n, ch]
-            memory.permute(1, 2, 0).view(bs, c, h, w),
-            enc_attns.permute(1, 0, 2, 3).view(
-                bs, self.encoder.num_layers, h, w, h, w  # dim of target
-            ),  # dim of source
-            dec_self_attns.permute(1, 0, 2, 3).view(
-                bs, self.decoder.num_layers, num_queries, num_queries  # dim of target
-            ),  # dim of source
-            dec_cross_attns.permute(1, 0, 2, 3).view(
-                bs, self.decoder.num_layers, num_queries, h, w  # dim of target
-            ),
+            memory.permute(1, 2, 0).view(bs, c, h, w)
         )  # dim of source
 
 
@@ -119,23 +110,21 @@ class TransformerEncoder(nn.Module):
 
         output = src
 
-        attn_weights = []
+        
 
         for layer in self.layers:
             # layer에서 나온 output들을 계속 다음 layer에 넣어줌
-            output, attn_weight = layer(
+            output = layer(
                 output,
                 src_mask=mask,
                 src_key_padding_mask=src_key_padding_mask,
                 pos=pos,
             )
-            attn_weights.append(attn_weight)
-        attn_weights = torch.stack(attn_weights)
 
         if self.norm is not None:
             output = self.norm(output)
 
-        return output, attn_weights
+        return output
 
 
 class TransformerDecoder(nn.Module):
@@ -162,12 +151,11 @@ class TransformerDecoder(nn.Module):
         output = tgt
 
         intermediate = []
-        self_attn_weights = []
-        cross_attn_weights = []
+
 
         # decoder layer를 반복하면서 이전 layer의 output 출력을 이후 layer에 넣어줌
         for layer in self.layers:
-            output, self_attn_weight, cross_attn_weight = layer(
+            output = layer(
                 output,
                 memory,
                 tgt_mask=tgt_mask,
@@ -183,10 +171,6 @@ class TransformerDecoder(nn.Module):
 
             if self.return_intermediate:
                 intermediate.append(self.norm(output))
-            self_attn_weights.append(self_attn_weight)
-            cross_attn_weights.append(cross_attn_weight)
-        self_attn_weights = torch.stack(self_attn_weights)
-        cross_attn_weights = torch.stack(cross_attn_weights)
 
         if self.norm is not None:
             output = self.norm(output)
@@ -195,9 +179,9 @@ class TransformerDecoder(nn.Module):
                 intermediate.append(output)
 
         if self.return_intermediate:
-            return torch.stack(intermediate), self_attn_weights, cross_attn_weights
+            return torch.stack(intermediate)
 
-        return output.unsqueeze(0), self_attn_weights, cross_attn_weights
+        return output.unsqueeze(0)
 
 
 class TransformerEncoderLayer(nn.Module):
@@ -243,10 +227,11 @@ class TransformerEncoderLayer(nn.Module):
         # 쿼리,키,밸류를 따로따로 받아주는게 아니라 src로 한 번에 받아줌.
         q = k = self.with_pos_embed(src, pos)
         # q,k,v가 준비된 다음, multi-haed attention 진행
-        src2, attn_weight = self.self_attn(
+        src2, _ = self.self_attn(
             q, k, value=src, attn_mask=src_mask, key_padding_mask=src_key_padding_mask
         )
         # 임배딩 된 값을 dropout, normalization
+        #print(src2.type())
         src = src + self.dropout1(src2)
         src = self.norm1(src)
         # Feedforward Network에 넣어줌.
@@ -255,7 +240,7 @@ class TransformerEncoderLayer(nn.Module):
         src = src + self.dropout2(src2)
         # Normalization
         src = self.norm2(src)
-        return src, attn_weight
+        return src
 
     def forward_pre(
         self,
@@ -266,14 +251,14 @@ class TransformerEncoderLayer(nn.Module):
     ):
         src2 = self.norm1(src)
         q = k = self.with_pos_embed(src2, pos)
-        src2, attn_weight = self.self_attn(
+        src2, _= self.self_attn(
             q, k, value=src2, attn_mask=src_mask, key_padding_mask=src_key_padding_mask
         )
         src = src + self.dropout1(src2)
         src2 = self.norm2(src)
         src2 = self.linear2(self.dropout(self.activation(self.linear1(src2))))
         src = src + self.dropout2(src2)
-        return src, attn_weight
+        return src
 
     def forward(
         self,
@@ -335,7 +320,7 @@ class TransformerDecoderLayer(nn.Module):
     ):
         q = k = self.with_pos_embed(tgt, query_pos)
         # self-attention
-        tgt2, self_attn_weight = self.self_attn(
+        tgt2, _= self.self_attn(
             q, k, value=tgt, attn_mask=tgt_mask, key_padding_mask=tgt_key_padding_mask
         )
         # skip-connection
@@ -343,7 +328,7 @@ class TransformerDecoderLayer(nn.Module):
         # normalization
         tgt = self.norm1(tgt)
         # cross-attention(key,value가 memory로부터 옴 => encoder layer에서 src가 들어옴)
-        tgt2, cross_attn_weight = self.multihead_attn(
+        tgt2, _ = self.multihead_attn(
             query=self.with_pos_embed(tgt, query_pos),
             key=self.with_pos_embed(memory, pos),
             value=memory,
@@ -359,7 +344,7 @@ class TransformerDecoderLayer(nn.Module):
         # skip-conncetion & normalization
         tgt = tgt + self.dropout3(tgt2)
         tgt = self.norm3(tgt)
-        return tgt, self_attn_weight, cross_attn_weight
+        return tgt
 
     def forward_pre(
         self,
@@ -374,12 +359,12 @@ class TransformerDecoderLayer(nn.Module):
     ):
         tgt2 = self.norm1(tgt)
         q = k = self.with_pos_embed(tgt2, query_pos)
-        tgt2, self_attn_weight = self.self_attn(
+        tgt2, _ = self.self_attn(
             q, k, value=tgt2, attn_mask=tgt_mask, key_padding_mask=tgt_key_padding_mask
         )
         tgt = tgt + self.dropout1(tgt2)
         tgt2 = self.norm2(tgt)
-        tgt2, cross_attn_weight = self.multihead_attn(
+        tgt2, _ = self.multihead_attn(
             query=self.with_pos_embed(tgt2, query_pos),
             key=self.with_pos_embed(memory, pos),
             value=memory,
@@ -390,7 +375,7 @@ class TransformerDecoderLayer(nn.Module):
         tgt2 = self.norm3(tgt)
         tgt2 = self.linear2(self.dropout(self.activation(self.linear1(tgt2))))
         tgt = tgt + self.dropout3(tgt2)
-        return tgt, self_attn_weight, cross_attn_weight
+        return tgt
 
     ## key_padding???
     def forward(

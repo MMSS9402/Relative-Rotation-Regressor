@@ -59,7 +59,7 @@ class GPTran(nn.Module):
         """
         extra_info = {}
         # import pdb; pdb.set_trace()
-        print("image_shaep:",samples.shape)
+        #print("image_shaep:",samples.shape)
         if isinstance(samples, (list, torch.Tensor)):
             # samples는 배치 단위 이미지
             samples = nested_tensor_from_tensor_list(samples)
@@ -71,7 +71,7 @@ class GPTran(nn.Module):
         src, mask = features[-1].decompose()
         assert mask is not None
         
-        print("ctrlc.shape:",extra_samples.shape)
+        #print("ctrlc.shape:",extra_samples.shape)
         extra_samples = torch.tensor(extra_samples, dtype = torch.float32)
         lines = extra_samples
         
@@ -83,7 +83,7 @@ class GPTran(nn.Module):
 
         # src를 projection 시켜서 transformer에 넣어주기
         # 여기서 query embedding에 들어가고, 이게 transformer decoder에 들어갈 때 tgt로 변수명이 표시됩니다.
-        hs, memory, enc_attn, dec_self_attn, dec_cross_attn = self.transformer(
+        hs, memory = self.transformer(
             src=self.input_proj(src),
             mask=mask,
             tgt=self.input_line_proj(lines),
