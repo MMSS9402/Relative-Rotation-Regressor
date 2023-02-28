@@ -174,98 +174,98 @@ def train(gpu, args):
 
         if not is_training:
             model.eval()
+        for epoch in range(cfg.START_EPOCH, cfg.SOLVER.EPOCHS):  
+            with tqdm(train_loader, unit="batch") as tepoch:
+                for i_batch, item in enumerate(tepoch):
+                    optimizer.zero_grad()
 
-        with tqdm(train_loader, unit="batch") as tepoch:
-            for i_batch, item in enumerate(tepoch):
-                optimizer.zero_grad()
+                    images, poses, intrinsics, lines = [x.to("cuda") for x in item]
+                    Ps = SE3(poses)
+                    Gs = SE3.IdentityLike(Ps)
+                    Ps_out = SE3(Ps.data.clone())
+                    
+                    #MSE_loss = torch.nn.MSELoss(size_average=None, reduce=None, reduction='mean')
+                    metrics = {}
 
-                images, poses, intrinsics, lines = [x.to("cuda") for x in item]
-                Ps = SE3(poses)
-                Gs = SE3.IdentityLike(Ps)
-                Ps_out = SE3(Ps.data.clone())
-                
-                #MSE_loss = torch.nn.MSELoss(size_average=None, reduce=None, reduction='mean')
-                metrics = {}
-
-                if not is_training:
-                    with torch.no_grad():
-                        poses_est = model(images, lines, Gs)
+                    if not is_training:
+                        with torch.no_grad():
+                            poses_est = model(images, lines, Gs)
+                            geo_loss_tr, geo_loss_rot, geo_metrics = geodesic_loss(Ps_out, poses_est, train_val=train_val)
+                    else:
+                        poses_est = model(images, lines,Gs)
                         geo_loss_tr, geo_loss_rot, geo_metrics = geodesic_loss(Ps_out, poses_est, train_val=train_val)
-                else:
-                    poses_est = model(images, lines,Gs)
-                    geo_loss_tr, geo_loss_rot, geo_metrics = geodesic_loss(Ps_out, poses_est, train_val=train_val)
 
-                    loss = args.w_tr * geo_loss_tr + args.w_rot * geo_loss_rot
+                        loss = args.w_tr * geo_loss_tr + args.w_rot * geo_loss_rot
 
-                    loss.backward()
-                    torch.nn.utils.clip_grad_norm_(model.parameters(), args.clip)
-                    optimizer.step()
-                    Gs = poses_est[-1].detach()
+                        loss.backward()
+                        torch.nn.utils.clip_grad_norm_(model.parameters(), args.clip)
+                        optimizer.step()
+                        Gs = poses_est[-1].detach()
 
-                    scheduler.step()
-                    train_steps += 1
+                        scheduler.step()
+                        train_steps += 1
 
-                metrics.update(geo_metrics)
+                    metrics.update(geo_metrics)
 
-                if gpu == 0 or args.no_ddp:
-                    logger.push(metrics)
+                    if gpu == 0 or args.no_ddp:
+                        logger.push(metrics)
 
-                    if i_batch % 20 == 0:
-                        torch.set_printoptions(sci_mode=False, linewidth=150)
-                        for local_index in range(len(poses_est)):
-                            print("pred number:", local_index)
-                            print("\n estimated pose")
-                            print(poses_est[local_index].data[0, :7, :].cpu().detach())
-                            print("ground truth pose")
-                            print(Ps_out.data[0, :7, :].cpu().detach())
-                            print("")
-                    if (i_batch + 10) % 20 == 0:
-                        wandb.log({
-                            'metrics' : metrics
-                            
-                        })
-                        print("\n metrics:", metrics, "\n")
-                    if i_batch % 100 == 0:
-                        print("epoch", str(epoch_count))
-                        print("subepoch: ", str(subepoch))
-                        print("using", train_val, "set")
+                        if i_batch % 20 == 0:
+                            torch.set_printoptions(sci_mode=False, linewidth=150)
+                            for local_index in range(len(poses_est)):
+                                print("pred number:", local_index)
+                                print("\n estimated pose")
+                                print(poses_est[local_index].data[0, :7, :].cpu().detach())
+                                print("ground truth pose")
+                                print(Ps_out.data[0, :7, :].cpu().detach())
+                                print("")
+                        if (i_batch + 10) % 20 == 0:
+                            wandb.log({
+                                'metrics' : metrics
+                                
+                            })
+                            print("\n metrics:", metrics, "\n")
+                        if i_batch % 100 == 0:
+                            print("epoch", str(epoch_count))
+                            print("subepoch: ", str(subepoch))
+                            print("using", train_val, "set")
 
-                if (
-                    train_steps % 10000 == 0
-                    and (gpu == 0 or args.no_ddp)
-                    and is_training
-                ):
-                    PATH = "output/%s/checkpoints/%06d.pth" % (args.name, train_steps)
-                    checkpoint = {
-                        "model": model.state_dict(),
-                        "optimizer": optimizer.state_dict(),
-                        "scheduler": scheduler.state_dict(),
-                    }
-                    torch.save(checkpoint, PATH)
-                #if(train_steps == )
+                    if (
+                        train_steps % 10000 == 0
+                        and (gpu == 0 or args.no_ddp)
+                        and is_training
+                    ):
+                        PATH = "output/%s/checkpoints/%06d.pth" % (args.name, train_steps)
+                        checkpoint = {
+                            "model": model.state_dict(),
+                            "optimizer": optimizer.state_dict(),
+                            "scheduler": scheduler.state_dict(),
+                        }
+                        torch.save(checkpoint, PATH)
+                    #if(train_steps == )
 
-                if train_steps >= args.steps:
-                    PATH = "output/%s/checkpoints/%06d.pth" % (args.name, train_steps)
-                    checkpoint = {
-                        "model": model.state_dict(),
-                        "optimizer": optimizer.state_dict(),
-                        "scheduler": scheduler.state_dict(),
-                    }
-                    torch.save(checkpoint, PATH)
-                    should_keep_training = False
-                    break
+                    if train_steps >= args.steps:
+                        PATH = "output/%s/checkpoints/%06d.pth" % (args.name, train_steps)
+                        checkpoint = {
+                            "model": model.state_dict(),
+                            "optimizer": optimizer.state_dict(),
+                            "scheduler": scheduler.state_dict(),
+                        }
+                        torch.save(checkpoint, PATH)
+                        should_keep_training = False
+                        break
 
-        subepoch = subepoch + 1
-        if subepoch == 11 or (
-            subepoch == 10
-            and (args.dataset == "interiornet" or args.dataset == "streetlearn")
-        ):
-            # we follow Cai et al and don't use a val set for interiornet and streetlearn
-            subepoch = 0
-            epoch_count += 1
+            subepoch = subepoch + 1
+            if subepoch == 11 or (
+                subepoch == 10
+                and (args.dataset == "interiornet" or args.dataset == "streetlearn")
+            ):
+                # we follow Cai et al and don't use a val set for interiornet and streetlearn
+                subepoch = 0
+                epoch_count += 1
 
-    print("finished training!")
-    dist.destroy_process_group()
+        print("finished training!")
+        dist.destroy_process_group()
 
 
 if __name__ == "__main__":
@@ -300,15 +300,15 @@ if __name__ == "__main__":
     )
 
     #model
-    parser.add_argument("--no_pos_encoding", action="store_true")
-    parser.add_argument("--noess", action="store_true")
-    parser.add_argument("--cross_features", action="store_true")
-    parser.add_argument("--use_single_softmax", action="store_true")
-    parser.add_argument("--l1_pos_encoding", action="store_true")
-    parser.add_argument("--fusion_transformer", action="store_true", default=False)
-    parser.add_argument("--fc_hidden_size", type=int, default=512)
-    parser.add_argument("--pool_size", type=int, default=60)
-    parser.add_argument("--transformer_depth", type=int, default=6)
+    # parser.add_argument("--no_pos_encoding", action="store_true")
+    # parser.add_argument("--noess", action="store_true")
+    # parser.add_argument("--cross_features", action="store_true")
+    # parser.add_argument("--use_single_softmax", action="store_true")
+    # parser.add_argument("--l1_pos_encoding", action="store_true")
+    # parser.add_argument("--fusion_transformer", action="store_true", default=False)
+    # parser.add_argument("--fc_hidden_size", type=int, default=512)
+    # parser.add_argument("--pool_size", type=int, default=60)
+    # parser.add_argument("--transformer_depth", type=int, default=6)
     
     args = parser.parse_args()
 

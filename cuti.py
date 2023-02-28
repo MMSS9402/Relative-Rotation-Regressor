@@ -11,7 +11,7 @@ from loftr import build_cuti_module
 
 
 class CuTi(nn.Module):
-    def __init__(self, backbone, ctrlc, transformer, cuti_module, decoder_layer):
+    def __init__(self, backbone, ctrlc, cuti_module, decoder_layer):
         super().__init__()
         self.pose_size = 7
         self.num_images = 2
@@ -19,7 +19,6 @@ class CuTi(nn.Module):
         self.ctrlc1 = ctrlc
         self.ctrlc2 = ctrlc
         self.backbone = backbone
-        self.transformer = transformer
         self.cuti_module = cuti_module
         self.decoder_layer = decoder_layer
 
@@ -119,12 +118,29 @@ def build(cfg):
     device = torch.device(cfg.DEVICE)
 
     ctrl = build_ctrl(cfg)
-    transformer = build_transformer(cfg)
+    # checkpoint = torch.load("/home/moon/source/CuTi/checkpoint/checkpoint.pth")
+    # del checkpoint['model']["zvp_embed.weight"]
+    # del checkpoint['model']["zvp_embed.bias"]
+    # del checkpoint['model']["fovy_embed.weight"]
+    # del checkpoint['model']["fovy_embed.bias"]
+    # del checkpoint['model']["hl_embed.weight"]
+    # del checkpoint['model']["hl_embed.bias"]
+    # del checkpoint['model']["vline_class_embed.weight"]
+    # del checkpoint['model']["vline_class_embed.bias"]
+    # del checkpoint['model']["hline_class_embed.weight"]
+    # del checkpoint['model']["hline_class_embed.bias"]
+    # del checkpoint['model']["hline_class_embed2.weight"]
+    # del checkpoint['model']["hline_class_embed2.bias"]
+    # del checkpoint['model']["query_embed.weight"]
+
+    # ctrl.load_state_dict(checkpoint['model'])
+    
+    # ctrl.eval()
     cuti_module = build_cuti_module(cfg)
     backbone = build_backbone(cfg)
     decoder_layer = cfg.MODELS.TRANSFORMER.DEC_LAYERS
 
-    model = CuTi(backbone, ctrl,transformer, cuti_module,decoder_layer) 
+    model = CuTi(backbone, ctrl, cuti_module,decoder_layer) 
 
     return model
 

@@ -4,6 +4,7 @@ logs/
 output/
 wandb/
 __pycache__/
+checkpoint/
 
 ## 파일 무시
 nohup.out

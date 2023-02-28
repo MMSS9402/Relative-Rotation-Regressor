@@ -16,13 +16,14 @@ MODELS:
 
 
 LOSS:
-  LOSSES: ['geodesic_loss']
+  LOSSES: ["train_geo_loss_tr","train_geo_loss_rot"]
   AUX_LOSS: False
   LINE_POS_ANGLE: 88.0
   LINE_NEG_ANGLE: 85.0
   
   WEIGHTS:
-    MSE_LOSS : 1.0 
+    train_geo_loss_tr : 1.0
+    train_geo_loss_rot : 1.0
     
 DATASETS:
   INPUT_WIDTH: 512

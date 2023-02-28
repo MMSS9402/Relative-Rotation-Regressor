@@ -119,7 +119,7 @@ def make_transform(self):
     )
 
 
-path = "/home/moon/source/CuTi/matterport/mp3d_planercnn_json/cached_set_train.json"
+path = "/home/moon/source/CuTi/matterport/mp3d_planercnn_json/cached_set_val.json"
 root = "/home/moon/source/CuTi/matterport/"
 
 with open(osp.join(path)) as f:
