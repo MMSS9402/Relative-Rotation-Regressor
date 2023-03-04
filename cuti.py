@@ -118,24 +118,24 @@ def build(cfg):
     device = torch.device(cfg.DEVICE)
 
     ctrl = build_ctrl(cfg)
-    # checkpoint = torch.load("/home/moon/source/CuTi/checkpoint/checkpoint.pth")
-    # del checkpoint['model']["zvp_embed.weight"]
-    # del checkpoint['model']["zvp_embed.bias"]
-    # del checkpoint['model']["fovy_embed.weight"]
-    # del checkpoint['model']["fovy_embed.bias"]
-    # del checkpoint['model']["hl_embed.weight"]
-    # del checkpoint['model']["hl_embed.bias"]
-    # del checkpoint['model']["vline_class_embed.weight"]
-    # del checkpoint['model']["vline_class_embed.bias"]
-    # del checkpoint['model']["hline_class_embed.weight"]
-    # del checkpoint['model']["hline_class_embed.bias"]
-    # del checkpoint['model']["hline_class_embed2.weight"]
-    # del checkpoint['model']["hline_class_embed2.bias"]
-    # del checkpoint['model']["query_embed.weight"]
+    checkpoint = torch.load("/home/moon/source/modified_CTRL-C/logs/checkpoint.pth")
+    del checkpoint['model']["zvp_embed.weight"]
+    del checkpoint['model']["zvp_embed.bias"]
+    del checkpoint['model']["fovy_embed.weight"]
+    del checkpoint['model']["fovy_embed.bias"]
+    del checkpoint['model']["hl_embed.weight"]
+    del checkpoint['model']["hl_embed.bias"]
+    del checkpoint['model']["vline_class_embed.weight"]
+    del checkpoint['model']["vline_class_embed.bias"]
+    del checkpoint['model']["hline_class_embed.weight"]
+    del checkpoint['model']["hline_class_embed.bias"]
+    del checkpoint['model']["hline_class_embed2.weight"]
+    del checkpoint['model']["hline_class_embed2.bias"]
+    del checkpoint['model']["query_embed.weight"]
 
-    # ctrl.load_state_dict(checkpoint['model'])
+    ctrl.load_state_dict(checkpoint['model'])
     
-    # ctrl.eval()
+    ctrl.eval()
     cuti_module = build_cuti_module(cfg)
     backbone = build_backbone(cfg)
     decoder_layer = cfg.MODELS.TRANSFORMER.DEC_LAYERS

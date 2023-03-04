@@ -221,12 +221,13 @@ def train(gpu, args):
                                 print("")
                         if (i_batch + 10) % 20 == 0:
                             wandb.log({
+                                'epoch' : epoch,
                                 'metrics' : metrics
                                 
                             })
                             print("\n metrics:", metrics, "\n")
                         if i_batch % 100 == 0:
-                            print("epoch", str(epoch_count))
+                            print("epoch", str(epoch))
                             print("subepoch: ", str(subepoch))
                             print("using", train_val, "set")
 
@@ -252,8 +253,9 @@ def train(gpu, args):
                             "scheduler": scheduler.state_dict(),
                         }
                         torch.save(checkpoint, PATH)
-                        should_keep_training = False
-                        break
+                        train_steps = 0
+                        # should_keep_training = False
+                        # break
 
             subepoch = subepoch + 1
             if subepoch == 11 or (
@@ -278,7 +280,7 @@ if __name__ == "__main__":
     parser.add_argument("--w_tr", type=float, default=10.0)
     parser.add_argument("--w_rot", type=float, default=10.0)
     parser.add_argument("--warmup", type=int, default=10000)
-    parser.add_argument("--steps", type=int, default=120000)
+    parser.add_argument("--steps", type=int, default=31932)
     parser.add_argument("--lr", type=float, default=5e-4)
     parser.add_argument("--clip", type=float, default=2.5)
     parser.add_argument("--weight_decay", type=float, default=1e-5)
