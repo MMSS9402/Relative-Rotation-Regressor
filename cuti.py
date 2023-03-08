@@ -118,7 +118,7 @@ def build(cfg):
     device = torch.device(cfg.DEVICE)
 
     ctrl = build_ctrl(cfg)
-    checkpoint = torch.load("/home/moon/source/modified_CTRL-C/logs/checkpoint.pth")
+    checkpoint = torch.load("/home/moon/source/CuTi/checkpoint/checkpoint.pth")
     del checkpoint['model']["zvp_embed.weight"]
     del checkpoint['model']["zvp_embed.bias"]
     del checkpoint['model']["fovy_embed.weight"]
@@ -136,6 +136,7 @@ def build(cfg):
     ctrl.load_state_dict(checkpoint['model'])
     
     ctrl.eval()
+    del checkpoint
     cuti_module = build_cuti_module(cfg)
     backbone = build_backbone(cfg)
     decoder_layer = cfg.MODELS.TRANSFORMER.DEC_LAYERS

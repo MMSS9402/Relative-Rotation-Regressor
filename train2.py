@@ -88,11 +88,19 @@ def train(gpu, args):
 
     #pct_warmup = args.warmup / args.steps
     #scheduler = torch.optim.lr_scheduler.StepLR(optimizer, cfg.SOLVER.LR_DROP)
+    # scheduler = torch.optim.lr_scheduler.OneCycleLR(
+    #     optimizer,
+    #     args.lr,
+    #     steps_per_epoch = 10,
+    #     epochs = cfg.SOLVER.EPOCHS,
+    #     div_factor=25,
+    #     cycle_momentum=False,
+    # )
     scheduler = torch.optim.lr_scheduler.OneCycleLR(
         optimizer,
         args.lr,
         steps_per_epoch = 10,
-        epoch = cfg.SOLVER.EPOCHS/2,
+        epochs = cfg.SOLVER.EPOCHS,
         div_factor=25,
         cycle_momentum=False,
     )
@@ -178,9 +186,14 @@ def train(gpu, args):
 
         if not is_training:
             model.eval()
+        train_loss = {}
         for epoch in range(cfg.START_EPOCH, cfg.SOLVER.EPOCHS):  
+            train_loss['loss'] = []
+            train_loss['geo_loss_tr'] = []
+            train_loss['geo_loss_rot'] = []
             with tqdm(train_loader, unit="batch") as tepoch:
                 for i_batch, item in enumerate(tepoch):
+                    tepoch.set_description(f"Epoch {epoch}")
                     optimizer.zero_grad()
 
                     images, poses, intrinsics, lines = [x.to("cuda") for x in item]
@@ -200,13 +213,15 @@ def train(gpu, args):
                         geo_loss_tr, geo_loss_rot, geo_metrics = geodesic_loss(Ps_out, poses_est, train_val=train_val)
 
                         loss = args.w_tr * geo_loss_tr + args.w_rot * geo_loss_rot
-
+                        train_loss['loss'].append(loss)
+                        train_loss['geo_loss_rot'].append(geo_loss_rot)
+                        train_loss['geo_loss_tr'].append(geo_loss_tr)
                         loss.backward()
                         torch.nn.utils.clip_grad_norm_(model.parameters(), args.clip)
                         optimizer.step()
                         Gs = poses_est[-1].detach()
 
-                        scheduler.step()
+                        
                         train_steps += 1
 
                     metrics.update(geo_metrics)
@@ -232,7 +247,7 @@ def train(gpu, args):
                             })
                             print("\n metrics:", metrics, "\n")
                         if i_batch % 100 == 0:
-                            print("epoch", str(epoch))
+                            #print("epoch", str(epoch))
                             print("subepoch: ", str(subepoch))
                             print("using", train_val, "set")
 
@@ -260,8 +275,24 @@ def train(gpu, args):
                         torch.save(checkpoint, PATH)
                         train_steps = 0
                         # should_keep_training = False
-                      
-                        break   
+                epoch_loss = 0
+                epoch_geo_rt= 0
+                epoch_geo_tr= 0
+                scheduler.step()
+                for i in range(len(train_loss['loss'])):
+                    epoch_loss += train_loss["loss"][i]
+                    epoch_geo_rt += train_loss["geo_loss_rot"][i]
+                    epoch_geo_tr += train_loss["geo_loss_tr"][i]
+                
+                epoch_loss = epoch_loss/len(train_loss['loss'])
+                epoch_geo_rt = epoch_geo_rt/train_loss["geo_loss_rot"]
+                epoch_geo_tr = epoch_geo_tr/train_loss["geo_loss_tr"]
+
+                wandb.log({
+                    'epoch_loss' : epoch_loss,
+                    "epoch_geo_rt" : epoch_geo_rt,
+                    "epoch_geo_tr" : epoch_geo_tr
+                })
 
             subepoch = subepoch + 1
             if subepoch == 11 or (
@@ -271,7 +302,6 @@ def train(gpu, args):
                 # we follow Cai et al and don't use a val set for interiornet and streetlearn
                 subepoch = 0
                 epoch_count += 1
-                epoch_train_loss = []
 
 
         print("finished training!")
