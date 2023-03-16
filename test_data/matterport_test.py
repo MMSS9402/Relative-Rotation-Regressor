@@ -8,7 +8,7 @@ import pickle
 import csv
 import numpy.linalg as LA
 
-from .base import RGBDDataset
+from .base_test import RGBDDataset
 import json
 
 
@@ -22,7 +22,7 @@ class Matterport(RGBDDataset):
 
         super(Matterport, self).__init__(name="Matterport", **kwargs)
 
-    def _build_dataset(self, valid=False):
+    def _build_dataset(self,valid=False):
         np.seterr(all="ignore")
         from tqdm import tqdm
 
@@ -36,7 +36,7 @@ class Matterport(RGBDDataset):
         }  # line 정보 추가
         base_pose = np.array([0, 0, 0, 0, 0, 0, 1])
 
-        path = "cached_set_train.json"
+        path = "cached_set_test.json"
         # if valid:
         #     print("valid data load!!")
         #     path = "cached_set_val.json"

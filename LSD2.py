@@ -119,8 +119,8 @@ def make_transform(self):
     )
 
 
-path = "/home/moon/source/CuTi/matterport/mp3d_planercnn_json/cached_set_val.json"
-root = "/home/moon/source/CuTi/matterport/"
+path = "/home/kmuvcl/source/CuTi/matterport/mp3d_planercnn_json/cached_set_test.json"
+root = "/home/kmuvcl/source/CuTi/matterport/"
 
 with open(osp.join(path)) as f:
     split = json.load(f)

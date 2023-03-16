@@ -1,0 +1,20 @@
+conda create -n cuti python=3.9
+conda activate cuti
+
+pip3 install opencv-python
+pip3 install tqdm
+pip3 install PyYAML 
+
+pip install torch==1.8.1+cu111 torchvision==0.9.1+cu111 torchaudio==0.8.1 -f https://download.pytorch.org/whl/torch_stable.html
+pip3 install git+https://github.com/princeton-vl/lietorch.git
+
+pip3 install scipy
+pip3 install tensorboard
+
+pip install cython
+pip install scikit-image
+pip install matplotlib
+pip install yacs
+pip install tensorboard
+pip install pylsd-nova
+pip install numpy

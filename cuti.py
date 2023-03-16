@@ -8,6 +8,7 @@ from ctrlc import build_ctrl
 from ctrlc.backbone import build_backbone
 from ctrlc.transformer import build_transformer
 from loftr import build_cuti_module
+from config import cfg
 
 
 class CuTi(nn.Module):
@@ -16,6 +17,11 @@ class CuTi(nn.Module):
         self.pose_size = 7
         self.num_images = 2
         
+        
+        self.batch_size = cfg.SOLVER.BATCH_SIZE
+        self.line_num = 512
+        self.hidden_dim = 64
+        
         self.ctrlc1 = ctrlc
         self.ctrlc2 = ctrlc
         self.backbone = backbone
@@ -23,17 +29,17 @@ class CuTi(nn.Module):
         self.decoder_layer = decoder_layer
 
         #demension check
-        self.layer1 = nn.Linear(self.decoder_layer,1)
-        self.layer2 = nn.Linear(self.decoder_layer,1)
+        self.layer1 = nn.Linear(384,64)
+        self.layer2 = nn.Linear(384,64)
         
         #1/2 layer
-        self.layer3 = nn.Linear(2,1)
+        self.layer3 = nn.Linear(2*self.batch_size,self.batch_size)
 
         #dimension
-        self.H = 32768
-        self.H2 = 8192
-        self.H3 = 2048
-        self.H4 = 512
+        self.H = int(self.line_num * self.hidden_dim)
+        self.H2 = int(self.line_num * self.hidden_dim/4)
+        self.H3 = int(self.line_num * self.hidden_dim/16)
+        self.H4 = int(self.line_num * self.hidden_dim/64)
         
         #pos_regressor
         self.pose_regressor = nn.Sequential(
@@ -68,7 +74,8 @@ class CuTi(nn.Module):
 
     def forward(self, images, lines, Gs):#수정 필요
         # ctrlc model
-        #print(images.shape)
+        # print(images.shape)
+        # print(lines.shape) #[Batch_size,num_image,lline_num,line,3]
         lines = lines.permute(1,0,2,3)
         images = images.permute(1,0,2,3,4)
         hs1 = self.ctrlc1(          #[dec_lay,bs,line_num,hidden_dim]
@@ -83,12 +90,15 @@ class CuTi(nn.Module):
         #permute hs1,hs2
         hs1 = hs1.permute(1,2,3,0)  #[bs,line_num,hidden_dim,dec_lay]
         hs2 = hs2.permute(1,2,3,0)  #[bs,line_num,hidden_dim,dec_lay]
+        
+        batch, line_num, _, _ = hs1.shape
 
-        hs1 = self.layer1(hs1)      #[bs,line_num,hidden_dim,1]
-        hs2 = self.layer2(hs2)      #[bs,line_num,hidden_dim,1]
+        hs1 = hs1.reshape(batch,line_num,-1)      #[bs,line_num,hidden_dim,1]
+        hs2 = hs2.reshape(batch,line_num,-1)      #[bs,line_num,hidden_dim,1]
 
-        hs1 = hs1.squeeze(3)         #[bs,line_num,hidden_dim]
-        hs2 = hs2.squeeze(3)         #[bs,line_num,hidden_dim]
+        #print("hs1__________________________:",hs1.shape)
+        hs1 = self.layer1(hs1)         #[bs,line_num,hidden_dim]
+        hs2 = self.layer2(hs2)       #[bs,line_num,hidden_dim]
         
         # insert hs1,hs2 cuti module
         hs1 , hs2 = self.cuti_module(hs1,hs2,None,None)
@@ -97,9 +107,12 @@ class CuTi(nn.Module):
         output =  torch.cat([hs1,hs2], dim=0)
         #print("output::::____",output.shape)
         output = output.permute(1,2,0)
+        #print("output::::____",output.shape)
+        if(output.shape[2] != 2*self.batch_size):
+            pass
         output = self.layer3(output)
         output = output.permute(2,0,1)
-        #output = output.squeeze()
+        #output = output.squeeze() 
         Batch_size, _, _ = output.shape
         output = output.reshape([Batch_size,-1])
         #print("flatten________",output.shape)
@@ -118,7 +131,7 @@ def build(cfg):
     device = torch.device(cfg.DEVICE)
 
     ctrl = build_ctrl(cfg)
-    checkpoint = torch.load("/home/moon/source/CuTi/checkpoint/checkpoint.pth")
+    checkpoint = torch.load("/home/kmuvcl/source/CuTi/checkpoint/checkpoint.pth")
     del checkpoint['model']["zvp_embed.weight"]
     del checkpoint['model']["zvp_embed.bias"]
     del checkpoint['model']["fovy_embed.weight"]

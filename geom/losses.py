@@ -6,7 +6,11 @@ def geodesic_loss(Ps, Gs, train_val='train'):
     ii, jj = torch.tensor([0, 1]), torch.tensor([1, 0]) 
 
     dP = Ps[:,jj] * Ps[:,ii].inv()
+    #print("GS______",Gs)
+    #print("GS[0]__ __ __ ", Gs[0])
+    #print("GS[0][:,jj]",Gs[0][:,jj])
     dG = Gs[0][:,jj] * Gs[0][:,ii].inv()
+    
     d = (dG * dP.inv()).log()
 
     tau, phi = d.split([3,3], dim=-1) 

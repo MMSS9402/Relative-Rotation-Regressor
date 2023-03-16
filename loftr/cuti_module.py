@@ -2,7 +2,8 @@ import copy
 from config import cfg
 import torch
 import torch.nn as nn
-from .linear_attention import LinearAttention, FullAttention
+from .linear_attention import LinearAttention, FullAttention, FulllSelfAttention
+from .cuti_attention import CuTiSelfAttention,CuTiCrossAttention
 
 
 class CuTiEncoderLayer(nn.Module):
@@ -19,8 +20,10 @@ class CuTiEncoderLayer(nn.Module):
         self.q_proj = nn.Linear(d_model, d_model, bias=False)
         self.k_proj = nn.Linear(d_model, d_model, bias=False)
         self.v_proj = nn.Linear(d_model, d_model, bias=False)
-        self.attention = LinearAttention() if attention == 'linear' else FullAttention()
+        self.attention = FulllSelfAttention()#LinearAttention() #if attention == 'linear' else FullAttention()
         self.cross_attention = FullAttention()
+        # self.attention = CuTiSelfAttention(d_model,nhead)
+        # self.cross_attention = CuTiCrossAttention(d_model,nhead)
         self.merge = nn.Linear(d_model, d_model, bias=False)
 
         # feed-forward network
@@ -50,7 +53,9 @@ class CuTiEncoderLayer(nn.Module):
             query = self.q_proj(query).view(bs, -1, self.nhead, self.dim)  # [N, L, (H, D)]
             key = self.k_proj(key).view(bs, -1, self.nhead, self.dim)  # [N, S, (H, D)]
             value = self.v_proj(value).view(bs, -1, self.nhead, self.dim)
-            message = self.attention(query, key, value, q_mask=x_mask, kv_mask=source_mask)  # [N, L, (H, D)]
+            #message = self.attention(query, key, value, q_mask=x_mask, kv_mask=source_mask)  # [N, L, (H, D)]
+            #message = self.attention(query,key,value=value,attn_mask=None,key_padding_mask=None)
+            message = self.attention(query,key,value,None,None)
             message = self.merge(message.view(bs, -1, self.nhead*self.dim))  # [N, L, C]
             message = self.norm1(message)
 
@@ -66,6 +71,7 @@ class CuTiEncoderLayer(nn.Module):
             key = self.k_proj(key).view(bs, -1, self.nhead, self.dim)  # [N, S, (H, D)]
             value = self.v_proj(value).view(bs, -1, self.nhead, self.dim)
             message = self.cross_attention(query, key, value,None,None)
+            #message = self.cross_attention(query,key,value)
             message = self.merge(message.view(bs, -1, self.nhead*self.dim))  # [N, L, C]
             message = self.norm1(message)
             return x + message

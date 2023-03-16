@@ -23,7 +23,7 @@ LOSS:
   
   WEIGHTS:
     train_geo_loss_tr : 1.0
-    train_geo_loss_rot : 1.0
+    train_geo_loss_rot : 1.0 
     
 DATASETS:
   INPUT_WIDTH: 512
@@ -36,7 +36,7 @@ DATASETS:
 SOLVER:
   LR: 0.0001
   LR_BACKBONE: 0.0001
-  BATCH_SIZE: 1
+  BATCH_SIZE: 6
   WEIGHT_DECAY: 0.0001
   EPOCHS: 30
   LR_DROP: 20
