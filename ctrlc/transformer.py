@@ -81,12 +81,13 @@ class Transformer(nn.Module):
             memory_key_padding_mask=mask,
             pos=pos_embed,   
         )
-
+        #print("memory_shape",memory.shape)
+        #print("decoder shape",hs.shape)
         #import pdb; pdb.set_trace()
 
         return (
             hs.transpose(1, 2),  # hs [dec_ayer, bs, n, ch]
-            memory.permute(1, 2, 0).view(bs, c, h, w)
+            memory.permute(1, 0, 2)
         )  # dim of source
 
 
@@ -107,7 +108,6 @@ class TransformerEncoder(nn.Module):
         pos: Optional[Tensor] = None,
     ):
         # backbone에서 처리된 feature가 src로 들어오게 됨
-
         output = src
 
         
@@ -120,6 +120,7 @@ class TransformerEncoder(nn.Module):
                 src_key_padding_mask=src_key_padding_mask,
                 pos=pos,
             )
+        
 
         if self.norm is not None:
             output = self.norm(output)
@@ -148,6 +149,7 @@ class TransformerDecoder(nn.Module):
         query_pos: Optional[Tensor] = None,
     ):
         # target에 object query와 Line segment 정보를 받고, memory 에는 encoder의 결과물을 받음
+        #print("decoder_layer_tgt" , tgt.shape)
         output = tgt
 
         intermediate = []
@@ -171,6 +173,7 @@ class TransformerDecoder(nn.Module):
 
             if self.return_intermediate:
                 intermediate.append(self.norm(output))
+        #print("decortr_layer_output",output.unsqueeze(0).shape)
 
         if self.norm is not None:
             output = self.norm(output)

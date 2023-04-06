@@ -55,7 +55,7 @@ class Matterport(RGBDDataset):
                     "/".join(str(split["data"][i][imgnum]["file_name"]).split("/")[6:]),
                 )
                 line_name = img_name.split("/")
-                line_name[8] = img_name.split("/")[8].split(".")[0] + "_line.csv"
+                line_name[9] = img_name.split("/")[9].split(".")[0] + "_line.csv"
                 line_name = "/".join(line_name)
 
                 images.append(img_name)

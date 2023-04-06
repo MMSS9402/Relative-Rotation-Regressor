@@ -1,7 +1,8 @@
 import numpy as np
 import wandb
-from collections import OrderedDict
 import argparse
+from collections import OrderedDict
+
 import cv2
 import torch
 import torch.optim as optim
@@ -34,8 +35,6 @@ import torchvision.models as models
 from cuti import build
 from config import cfg
 
-DEPTH_SCALE = 5
-
 def eval_camera(predictions):
     acc_threshold = {
         "tran": 1.0,
@@ -47,6 +46,20 @@ def eval_camera(predictions):
 
     gt_tran = np.vstack(predictions["camera"]["gts"]["tran"])
     gt_rot = np.vstack(predictions["camera"]["gts"]["rot"])
+    # predictions["camera"]["preds"]["tran"] = np.array(predictions["camera"]["preds"]["tran"])
+    # predictions["camera"]["preds"]["rot"] = np.array(predictions["camera"]["preds"]["rot"])
+
+    # predictions["camera"]["gts"]["tran"] = predictions["camera"]["gts"]["tran"].cpu().numpy()
+    # predictions["camera"]["gts"]["rot"] =  predictions["camera"]["gts"]["rot"].cpu().numpy()
+
+    # print("prediction__________",predictions)
+    # print("preds_trans________",predictions["camera"]["preds"]["tran"])
+    # print("preds_rotation________",predictions["camera"]["gts"]["rot"])
+    # pred_tran = np.vstack(predictions["camera"]["preds"]["tran"])
+    # pred_rot = np.vstack(predictions["camera"]["preds"]["rot"])
+
+    # gt_tran = np.vstack(predictions["camera"]["gts"]["tran"])
+    # gt_rot = np.vstack(predictions["camera"]["gts"]["rot"])
 
     top1_error = {
         "tran": np.linalg.norm(gt_tran - pred_tran, axis=1),
@@ -79,9 +92,10 @@ def eval_camera(predictions):
     
     return camera_metrics
 
-if __name__ == '__maiin__':
+if __name__ == '__main__':
     parser = argparse.ArgumentParser()
-     # data
+
+    # data
     parser.add_argument("--datapath")
     parser.add_argument("--weights")
     parser.add_argument("--image_size", default=[384,512])
@@ -102,27 +116,44 @@ if __name__ == '__maiin__':
 
     args = parser.parse_args()
     torch.multiprocessing.set_start_method('spawn')
+    
+    output_folder = 'matterport_test'
+    
+    print('performing evaluation on %s set using model %s' % (output_folder, args.ckpt))
 
+    
+    try:
+        os.makedirs(os.path.join('output', args.exp, output_folder))
+    except:
+        pass
+    
+    
     db = dataset_factory(
-    ["matterport"],
-    datapath="/home/kmuvcl/source/CuTi/matterport",
-    subepoch=0,
-    is_training=False,
-    gpu = 0,
-    streetlearn_interiornet_type = None,
-    use_mini_dataset = False
+        ["matterport"],
+        datapath="/home/kmuvcl/source/CuTi/matterport",
+        subepoch=0,
+        is_training=False,
+        gpu = 0,
+        streetlearn_interiornet_type = None,
+        use_mini_dataset = False
     )
-
-    test_loader = DataLoader(db, batch_size=args.batch, num_workers=1,shuffle=False)
-
     model = build(cfg)
+
+    ckpt = args.ckpt
     state_dict = OrderedDict([
-        (k.replace("module.", ""), v) for (k, v) in torch.load(args.ckpt)['model'].items()])
-    model.load_state_dict(state_dict)
+            (k.replace("module.", ""), v) for (k, v) in torch.load(ckpt)['model'].items()])
+    model.load_state_dict(state_dict,False)
     model = model.cuda().eval()
 
+
+    test_loader = DataLoader(
+    db, batch_size=cfg.SOLVER.BATCH_SIZE, num_workers=1, shuffle=False
+    )
+
+    DEPTH_SCALE =5
     predictions = {'camera': {'preds': {'tran': [], 'rot': []}, 'gts': {'tran': [], 'rot': []}}}
     loss_list =[]
+
 
     with tqdm(test_loader, unit="batch") as tepoch:
         for i_batch, item in enumerate(tepoch):
@@ -130,7 +161,45 @@ if __name__ == '__maiin__':
             Ps = SE3(poses) 
             Gs = SE3.IdentityLike(Ps)
             Ps_out = SE3(Ps.data.clone())
+            try:
+                model(images,lines,Gs)
+            except RuntimeError:
+                continue
             with torch.no_grad():
                 poses_est = model(images, lines, Gs)
-            #print(poses)
-            
+            #print(poses.shape)
+            #print(poses[0][1])
+            for i in range(6):
+                gt_poses = poses[i][1].data.cpu().numpy()
+                #print(gt_poses)
+                gt_copy = np.copy(gt_poses)
+                predictions['camera']['gts']['tran'].append(gt_poses[:3])
+                gt_rotation = gt_poses[3:]
+                temp = gt_rotation[0]
+                gt_rotation[0] = gt_rotation[3]
+                gt_rotation[3] = temp
+                if gt_rotation[0] < 0: # normalize quaternions to have positive "W" (equivalent)
+                    gt_rotation[0] *= -1
+                    gt_rotation[1] *= -1
+                    gt_rotation[2] *= -1
+                    gt_rotation[3] *= -1
+                predictions['camera']['gts']['rot'].append(gt_rotation)
+                
+                preds = poses_est[0][i][1].data.cpu().numpy()
+                
+                pr_copy = np.copy(preds)
+                
+                preds[3] = pr_copy[6] # swap 3 & 6, we used W last; want W first in quat
+                preds[6] = pr_copy[3]
+                preds[:3] = preds[:3] * DEPTH_SCALE 
+                
+                predictions['camera']['preds']['tran'].append(preds[:3])
+                predictions['camera']['preds']['rot'].append(preds[3:])
+                #print(predictions['camera']['gts']['tran'])
+                #print(predictions['camera']['gts']['rot'])
+            #print(predictions)  
+                
+    camera_metrics = eval_camera(predictions)
+
+    for k in camera_metrics:
+        print(k, camera_metrics[k])

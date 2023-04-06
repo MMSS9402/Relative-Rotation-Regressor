@@ -3,7 +3,6 @@ from config import cfg
 import torch
 import torch.nn as nn
 from .linear_attention import LinearAttention, FullAttention, FulllSelfAttention
-from .cuti_attention import CuTiSelfAttention,CuTiCrossAttention
 
 
 class CuTiEncoderLayer(nn.Module):
@@ -13,8 +12,9 @@ class CuTiEncoderLayer(nn.Module):
                  attention='linear'):
         super(CuTiEncoderLayer, self).__init__()
 
-        self.dim = d_model // nhead
         self.nhead = nhead
+        self.dim = d_model // nhead 
+
 
         # multi-head attention
         self.q_proj = nn.Linear(d_model, d_model, bias=False)
@@ -47,33 +47,40 @@ class CuTiEncoderLayer(nn.Module):
         """
         if(mode == 'self'):
             bs = x.size(0)
+            dec_lay = x.size(1)
+            self.line_num = x.size(2)
             query, key, value = x, source, source
 
             # multi-head attention
-            query = self.q_proj(query).view(bs, -1, self.nhead, self.dim)  # [N, L, (H, D)]
-            key = self.k_proj(key).view(bs, -1, self.nhead, self.dim)  # [N, S, (H, D)]
-            value = self.v_proj(value).view(bs, -1, self.nhead, self.dim)
+            query = self.q_proj(query).view(bs, dec_lay, self.line_num,self.nhead, self.dim)  # [N, L, (H, D)]
+            key = self.k_proj(key).view(bs, dec_lay, self.line_num,self.nhead, self.dim)  # [N, S, (H, D)]
+            value = self.v_proj(value).view(bs, dec_lay, self.line_num,self.nhead, self.dim)
             #message = self.attention(query, key, value, q_mask=x_mask, kv_mask=source_mask)  # [N, L, (H, D)]
             #message = self.attention(query,key,value=value,attn_mask=None,key_padding_mask=None)
             message = self.attention(query,key,value,None,None)
-            message = self.merge(message.view(bs, -1, self.nhead*self.dim))  # [N, L, C]
+            message = self.merge(message.view(bs, dec_lay,  self.line_num, self.nhead*self.dim))  # [N, L, C]
             message = self.norm1(message)
 
             # feed-forward network
-            message = self.mlp(torch.cat([x, message], dim=2))
+            message = self.mlp(torch.cat([x, message], dim=3))
             message = self.norm2(message)
 
             return x + message
         elif(mode == 'cross'):
             bs = x.size(0)
+            dec_lay = x.size(1)
+            self.line_num = x.size(2)
             query, key, value = x, source, source
-            query = self.q_proj(query).view(bs, -1, self.nhead, self.dim)  # [N, L, (H, D)]
-            key = self.k_proj(key).view(bs, -1, self.nhead, self.dim)  # [N, S, (H, D)]
-            value = self.v_proj(value).view(bs, -1, self.nhead, self.dim)
+            query = self.q_proj(query).view(bs, dec_lay, self.line_num,self.nhead, self.dim) # [N, L, (H, D)]
+            key = self.k_proj(key).view(bs, dec_lay, self.line_num,self.nhead, self.dim)#.view(bs, -1, self.nhead, self.dim)  # [N, S, (H, D)]
+            value = self.v_proj(value).view(bs, dec_lay, self.line_num,self.nhead, self.dim)#.view(bs, -1, self.nhead, self.dim)
             message = self.cross_attention(query, key, value,None,None)
             #message = self.cross_attention(query,key,value)
-            message = self.merge(message.view(bs, -1, self.nhead*self.dim))  # [N, L, C]
+            message = self.merge(message.view(bs, dec_lay, self.line_num, self.nhead*self.dim))  # [N, L, C]
             message = self.norm1(message)
+            
+            message = self.mlp(torch.cat([x, message], dim=3))
+            message = self.norm2(message)
             return x + message
 
 class CuTiTransformer(nn.Module):
@@ -104,13 +111,15 @@ class CuTiTransformer(nn.Module):
             mask1 (torch.Tensor): [N, S] (optional)
         """
         #print("cuti_cuti:",feat0.shape)
-        assert self.d_model == feat0.size(2), "the feature number of src and transformer must be equal"
+        assert self.d_model == feat0.size(3), "the feature number of src and transformer must be equal"
 
         for layer, name in zip(self.layers, self.layer_names):
             if name == 'self':
+                #print("self-attention")
                 feat0 = layer(feat0, feat0, mask0, mask0,mode ='self')
                 feat1 = layer(feat1, feat1, mask1, mask1,mode ='self')
             elif name == 'cross':
+                #print("cross-attention")
                 feat0 = layer(feat0, feat1, mask0, mask1,mode ='cross')
                 feat1 = layer(feat1, feat0, mask1, mask0,mode ='cross')
             else:

@@ -19,7 +19,7 @@ class CuTi(nn.Module):
         
         
         self.batch_size = cfg.SOLVER.BATCH_SIZE
-        self.line_num = 512
+        self.line_num = 128
         self.hidden_dim = 64
         
         self.ctrlc1 = ctrlc
@@ -29,17 +29,16 @@ class CuTi(nn.Module):
         self.decoder_layer = decoder_layer
 
         #demension check
-        self.layer1 = nn.Linear(384,64)
-        self.layer2 = nn.Linear(384,64)
+        self.layer1 = nn.Linear(6*self.hidden_dim,self.hidden_dim)
+        self.layer2 = nn.Linear(6*self.hidden_dim,self.hidden_dim)
         
         #1/2 layer
-        self.layer3 = nn.Linear(2*self.batch_size,self.batch_size)
-
+        self.layer3 = nn.Linear(2*self.hidden_dim,self.hidden_dim)
         #dimension
-        self.H = int(self.line_num * self.hidden_dim)
-        self.H2 = int(self.line_num * self.hidden_dim/4)
-        self.H3 = int(self.line_num * self.hidden_dim/16)
-        self.H4 = int(self.line_num * self.hidden_dim/64)
+        self.H = int(6*self.line_num * self.hidden_dim)
+        self.H2 = int(6*self.line_num * self.hidden_dim/4)
+        self.H3 = int(6*self.line_num * self.hidden_dim/16)
+        self.H4 = int(6*self.line_num * self.hidden_dim/64)
         
         #pos_regressor
         self.pose_regressor = nn.Sequential(
@@ -78,49 +77,32 @@ class CuTi(nn.Module):
         # print(lines.shape) #[Batch_size,num_image,lline_num,line,3]
         lines = lines.permute(1,0,2,3)
         images = images.permute(1,0,2,3,4)
-        hs1 = self.ctrlc1(          #[dec_lay,bs,line_num,hidden_dim]
+        #print("cuti_input images",images.shape)
+        hs1,memory1 = self.ctrlc1(          #[dec_lay,bs,line_num,hidden_dim]
             images[0],
             lines[0]
             )
         
-        hs2 = self.ctrlc2(          #[dec_lay,bs,line_num,hidden_dim]
+        hs2,memory2 = self.ctrlc2(          #[dec_lay,bs,line_num,hidden_dim]
             images[1],
             lines[1]
         )
+        print("90",memory1.shape)
         #permute hs1,hs2
-        hs1 = hs1.permute(1,2,3,0)  #[bs,line_num,hidden_dim,dec_lay]
-        hs2 = hs2.permute(1,2,3,0)  #[bs,line_num,hidden_dim,dec_lay]
-        
-        batch, line_num, _, _ = hs1.shape
-
-        hs1 = hs1.reshape(batch,line_num,-1)      #[bs,line_num,hidden_dim,1]
-        hs2 = hs2.reshape(batch,line_num,-1)      #[bs,line_num,hidden_dim,1]
-
-        #print("hs1__________________________:",hs1.shape)
-        hs1 = self.layer1(hs1)         #[bs,line_num,hidden_dim]
-        hs2 = self.layer2(hs2)       #[bs,line_num,hidden_dim]
+        hs1 = hs1.permute(1,0,2,3)  #[bs,dec_lay,line_num,hidden_dim]
+        hs2 = hs2.permute(1,0,2,3)  #[bs,dec_lay,line_num,hidden_dim]
         
         # insert hs1,hs2 cuti module
+        #print("111",hs1.shape)
         hs1 , hs2 = self.cuti_module(hs1,hs2,None,None)
         
-        #print("hs1______",hs1.shape)
-        output =  torch.cat([hs1,hs2], dim=0)
-        #print("output::::____",output.shape)
-        output = output.permute(1,2,0)
-        #print("output::::____",output.shape)
-        if(output.shape[2] != 2*self.batch_size):
-            pass
+        output =  torch.cat([hs1,hs2], dim=3)
         output = self.layer3(output)
-        output = output.permute(2,0,1)
-        #output = output.squeeze() 
-        Batch_size, _, _ = output.shape
+
+        Batch_size, dec_lay, _, _ = output.shape
         output = output.reshape([Batch_size,-1])
-        #print("flatten________",output.shape)
-        
+
         pose_preds = self.pose_regressor(output)
-        #print("Pose_pred______",pose_preds.shape)
-        #print("GS__________",Gs.shape)
-        
 
         return self.normalize_preds(Gs, pose_preds)
         
@@ -131,24 +113,12 @@ def build(cfg):
     device = torch.device(cfg.DEVICE)
 
     ctrl = build_ctrl(cfg)
-    checkpoint = torch.load("/home/kmuvcl/source/CuTi/checkpoint/checkpoint.pth")
-    del checkpoint['model']["zvp_embed.weight"]
-    del checkpoint['model']["zvp_embed.bias"]
-    del checkpoint['model']["fovy_embed.weight"]
-    del checkpoint['model']["fovy_embed.bias"]
-    del checkpoint['model']["hl_embed.weight"]
-    del checkpoint['model']["hl_embed.bias"]
-    del checkpoint['model']["vline_class_embed.weight"]
-    del checkpoint['model']["vline_class_embed.bias"]
-    del checkpoint['model']["hline_class_embed.weight"]
-    del checkpoint['model']["hline_class_embed.bias"]
-    del checkpoint['model']["hline_class_embed2.weight"]
-    del checkpoint['model']["hline_class_embed2.bias"]
-    del checkpoint['model']["query_embed.weight"]
+    checkpoint = torch.load("/home/kmuvcl/source/oldCuTi/CuTi/checkpoint/checkpoint.pth")
 
-    ctrl.load_state_dict(checkpoint['model'])
+
+    ctrl.load_state_dict(checkpoint['model'],False)
     
-    ctrl.eval()
+    # ctrl.eval()
     del checkpoint
     cuti_module = build_cuti_module(cfg)
     backbone = build_backbone(cfg)
