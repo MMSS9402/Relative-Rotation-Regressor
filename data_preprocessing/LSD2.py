@@ -19,7 +19,7 @@ import os.path as osp
 import pickle
 import csv
 import numpy.linalg as LA
-import data.transforms as T
+#import data.transforms as T
 
 
 def eul2rotm_ypr(euler):
@@ -113,14 +113,14 @@ def sample_vert_segs_np(segs, thresh_theta=22.5):
     theta = np.arctan2(np.abs(b), np.abs(a))
     thresh_theta = np.radians(thresh_theta)
     return segs[theta < thresh_theta]
-def make_transform(self):
+#def make_transform(self):
     return T.Compose(
         [T.ToTensor(), T.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])]
     )
 
 
-path = "/home/kmuvcl/source/CuTi/matterport/mp3d_planercnn_json/cached_set_test.json"
-root = "/home/kmuvcl/source/CuTi/matterport/"
+path = "/home/kmuvcl/source/oldCuTi/CuTi/matterport/mp3d_planercnn_json/cached_set_val.json"
+root = "/home/kmuvcl/source/oldCuTi/CuTi/matterport/"
 
 with open(osp.join(path)) as f:
     split = json.load(f)
@@ -147,7 +147,7 @@ for i in tqdm(range(len(split["data"]))):
             root,
             "/".join(str(split["data"][i][imgnum]["file_name"]).split("/")[6:]),
         )
-        print("img:",img_name)
+        #print("img:",img_name)
         img_filename.append(img_name)
         image = cv2.imread(img_name)
         image = image[:, :, ::-1]  # convert to rgb'
@@ -156,17 +156,17 @@ for i in tqdm(range(len(split["data"]))):
         org_h, org_w = image.shape[0], image.shape[1]
         org_sz = np.array([org_h, org_w])
 
-        image = cv2.resize(image, dsize=(512, 512))
-        input_sz = np.array([512, 512])
+        image = cv2.resize(image, dsize=(640, 480))
+        input_sz = np.array([640, 480])
 
-        ratio_x = float(512) / float(org_w)
-        ratio_y = float(512) / float(org_h)
+        ratio_x = float(640) / float(org_w)
+        ratio_y = float(480) / float(org_h)
 
         pp = (org_w / 2, org_h / 2)
         rho = 2.0 / np.minimum(org_w, org_h)
 
         line_name = img_name.split("/")
-        line_name[8] = img_name.split("/")[8].split(".")[0] + "_line.csv"
+        line_name[9] = img_name.split("/")[9].split(".")[0] + "_line.csv"
         line_name = "/".join(line_name)
 
         try:
@@ -179,16 +179,17 @@ for i in tqdm(range(len(split["data"]))):
 
             Line_image_name = img_name.split("/")
             csv_file_name = img_name.split("/")
-            Line_image_name[8] = (
-            img_name.split("/")[8].split(".")[0]
+            Line_image_name[9] = (
+            img_name.split("/")[9].split(".")[0]
             + "_line."
-            + img_name.split("/")[8].split(".")[1]
+            + img_name.split("/")[9].split(".")[1]
             )
-            csv_file_name[8] = img_name.split("/")[8].split(".")[0] + "_line.csv"
+            csv_file_name[9] = img_name.split("/")[9].split(".")[0] + "_line.csv"
             Line_image_name = "/".join(Line_image_name)
             csv_file_name = "/".join(csv_file_name)
             print("cv2:",Line_image_name)
             cv2.imwrite(Line_image_name, drawn_img)
+            print(lines)
             data_df = pd.DataFrame(lines[0][0])
             data_df = data_df.T
             for i in range(1, len(lines)):
@@ -221,4 +222,4 @@ for i in tqdm(range(len(split["data"]))):
         )
         extra["lines"] = target["lines"].clone()
 
-data = make_transform(image, extra, target)
+#data = make_transform(image, extra, target)

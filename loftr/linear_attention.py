@@ -41,7 +41,7 @@ class LinearAttention(Module):
 
         return queried_values.contiguous()
 
-class FulllSelfAttention(Module):
+class FullAttention(Module):
     def __init__(self, use_dropout=False, attention_dropout=0.1):
         super().__init__()
         self.use_dropout = use_dropout
@@ -60,18 +60,22 @@ class FulllSelfAttention(Module):
         """
         #print("self_queries_dim",queries.shape)
         # Compute the unnormalized attention and apply the masks
-        QK = queries @ keys.transpose(-2,-1)
-        
-        A = F.softmax(QK, dim=-1)
+
+        QK = torch.einsum("nlhd,nshd->nlsh", queries, keys)
+        if kv_mask is not None:
+            QK.masked_fill_(~(q_mask[:, :, None, None] * kv_mask[:, None, :, None]), float('-inf'))
+
+        # Compute the attention and the weighted average
+        softmax_temp = 1. / queries.size(3)**.5  # sqrt(D)
+        A = torch.softmax(softmax_temp * QK, dim=2)
         if self.use_dropout:
             A = self.dropout(A)
 
-        queried_values = A @ values
+        queried_values = torch.einsum("nlsh,nshd->nlhd", A, values)
+
         return queried_values.contiguous()
 
-
-
-class FullAttention(Module):
+class FullAttentionDualSoftmax(Module):
     def __init__(self, use_dropout=False, attention_dropout=0.1):
         super().__init__()
         self.use_dropout = use_dropout
@@ -90,11 +94,16 @@ class FullAttention(Module):
         """
         #print("cross_queries_dim",queries.shape)
         # Compute the unnormalized attention and apply the masks
-        QK = queries @ keys.transpose(-2,-1)
-        A = F.softmax(QK, dim=-1) * F.softmax(QK,dim=-2)
- 
+        QK = torch.einsum("nlhd,nshd->nlsh", queries, keys)
+        if kv_mask is not None:
+            QK.masked_fill_(~(q_mask[:, :, None, None] * kv_mask[:, None, :, None]), float('-inf'))
+
+        # Compute the attention and the weighted average
+        softmax_temp = 1. / queries.size(3)**.5  # sqrt(D)
+        A = torch.softmax(softmax_temp * QK, dim=2) * torch.softmax(softmax_temp*QK,dim=1)
         if self.use_dropout:
             A = self.dropout(A)
 
-        queried_values = A @ values
+        queried_values = torch.einsum("nlsh,nshd->nlhd", A, values)
+
         return queried_values.contiguous()

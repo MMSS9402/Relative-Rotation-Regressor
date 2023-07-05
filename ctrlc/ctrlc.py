@@ -34,16 +34,24 @@ class GPTran(nn.Module):
             aux_loss: True if auxiliary decoding losses (loss at each decoder layer) are to be used.
         """
         super().__init__()
-        # self.num_queries = num_queries
+        self.num_queries = num_queries
         self.transformer = transformer
 
         self.use_structure_tensor = use_structure_tensor
 
         hidden_dim = transformer.d_model
+        
+        self.vp1_embed = nn.Linear(hidden_dim, 3)
+        self.vp2_embed = nn.Linear(hidden_dim, 3)
+        self.vp3_embed = nn.Linear(hidden_dim, 3)
+        self.vp1_class_embed = nn.Linear(hidden_dim, 1)
+        self.vp2_class_embed = nn.Linear(hidden_dim, 1)
+        self.vp3_class_embed = nn.Linear(hidden_dim, 1)
 
         self.input_proj = nn.Conv2d(backbone.num_channels, hidden_dim, kernel_size=1)
         # query embedding은 nn모듈에서 가져다가 쓴다...
-        # self.query_embed = nn.Embedding(num_queries, hidden_dim)
+        
+        self.query_embed = nn.Embedding(num_queries, hidden_dim)
         line_dim = 3
         if self.use_structure_tensor:
             line_dim = 6
@@ -75,8 +83,8 @@ class GPTran(nn.Module):
         extra_samples = torch.tensor(extra_samples, dtype = torch.float32)
         lines = extra_samples
         
-        lmask = ~extra_samples.squeeze(2).bool()
-
+        lmask = ~extra_samples.bool()
+        #print("lmask.shape",lmask.shape)
         # vlines [bs, n, 3]
         if self.use_structure_tensor:
             lines = self._to_structure_tensor(lines)
@@ -86,17 +94,47 @@ class GPTran(nn.Module):
         hs, memory = self.transformer(
             src=self.input_proj(src),
             mask=mask,
+            query_embed=self.query_embed.weight,
             tgt=self.input_line_proj(lines),
-            tgt_key_padding_mask=None,
+            tgt_key_padding_mask=lmask,
             pos_embed=pos[-1],
         )
+        
+        outputs_vp1 = self.vp1_embed(hs[:,:,0,:]) # [n_dec_layer, bs, 3]
+        outputs_vp1 = F.normalize(outputs_vp1, p=2, dim=-1)
+
+        outputs_vp2 = self.vp2_embed(hs[:,:,1,:]) # [n_dec_layer, bs, 3]
+        outputs_vp2 = F.normalize(outputs_vp2, p=2, dim=-1)
+
+        outputs_vp3 = self.vp3_embed(hs[:,:,2,:]) # [n_dec_layer, bs, 3]
+        outputs_vp3 = F.normalize(outputs_vp3, p=2, dim=-1)  
+
+        outputs_vp1_class = self.vp1_class_embed(hs[:,:,3:,:])
+        outputs_vp2_class = self.vp2_class_embed(hs[:,:,3:,:])
+        outputs_vp3_class = self.vp3_class_embed(hs[:,:,3:,:])
         # ha [n_dec_layer, bs, num_query, ch]
 
         # extra_info["enc_attns"] = enc_attn
         # extra_info["dec_self_attns"] = dec_self_attn
         # extra_info["dec_cross_attns"] = dec_cross_attn
+        
+        # out = {
+        #     "pred_zvp": outputs_zvp[-1],
+        #     "pred_fovy": outputs_fovy[-1],
+        #     "pred_hl": outputs_hl[-1],
+        #     "pred_hvp1" : outputs_hvp1[-1],
+        #     "pred_hvp2" : outputs_hvp2[-1],
+        # }
+        # if self.aux_loss:
+        #     out["aux_outputs"] = self._set_aux_loss(
+        #         outputs_zvp,
+        #         outputs_fovy,
+        #         outputs_hl,
+        #         outputs_hvp1,
+        #         outputs_hvp2,
+        #     )
 
-        return hs,memory
+        return hs[:, :, 3:, :],memory.permute(0,2,3,1),outputs_vp1[-1],outputs_vp2[-1],outputs_vp3[-1]#,outputs_vline_class[-1], outputs_hline_class[-1],outputs_hline_class2[-1]
 
     def _to_structure_tensor(self, params):
         (a, b, c) = torch.unbind(params, dim=-1)

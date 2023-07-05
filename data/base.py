@@ -21,7 +21,7 @@ class RGBDDataset(data.Dataset):
         self,
         name,
         datapath,
-        reshape_size=[384, 512],
+        reshape_size=[480, 640],
         subepoch=None,
         is_training=True,
         gpu=0,
@@ -87,6 +87,7 @@ class RGBDDataset(data.Dataset):
             poses = self.scene_info["poses"][index]
             intrinsics = self.scene_info["intrinsics"][index]
             lines_list = self.scene_info["lines"][index]
+            vp_list = self.scene_info['vps'][index]
 
             images = []
             for i in range(2):
@@ -106,11 +107,15 @@ class RGBDDataset(data.Dataset):
             lines = []
             for i in range(2):
                 lines.append(self.read_line_file(lines_list[i],10)) 
-            images, poses, intrinsics, lines = self.aug(
-                images, poses, intrinsics, lines
+
+            vps = []
+            for i in range(2):
+                vps.append(np.array(vp_list[i]))
+            images, poses, intrinsics, lines, vps = self.aug(
+                images, poses, intrinsics, lines, vps
             )
 
-            return images, poses, intrinsics, lines
+            return images, poses, intrinsics, lines, vps
         else:
             local_index = index
             # in case index fails
@@ -120,7 +125,7 @@ class RGBDDataset(data.Dataset):
                     poses = self.scene_info["poses"][local_index]
                     intrinsics = self.scene_info["intrinsics"][local_index]
                     lines_list = self.scene_info["lines"][local_index]
-
+                    vp_list = self.scene_info['vps'][index]
                     images = []
                     
                     for i in range(2):
@@ -141,11 +146,15 @@ class RGBDDataset(data.Dataset):
                     for i in range(2):
                         lines.append(self.__class__.read_line_file(lines_list[i], 10))
 
-                    images, poses, intrinsics, lines = self.aug(
-                        images, poses, intrinsics, lines
+                    vps = []
+                    for i in range(2):
+                        vps.append(np.array(vp_list[i]))
+
+                    images, poses, intrinsics, lines, vps = self.aug(
+                        images, poses, intrinsics, lines,vps
                     )
 
-                    return images, poses, intrinsics, lines
+                    return images, poses, intrinsics, lines,vps
                 except:
                     local_index += 1
                     continue

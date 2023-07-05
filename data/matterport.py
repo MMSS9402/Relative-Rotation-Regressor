@@ -33,10 +33,11 @@ class Matterport(RGBDDataset):
             "poses": [],
             "intrinsics": [],
             "lines": [],
+            'vps': [],
         }  # line 정보 추가
         base_pose = np.array([0, 0, 0, 0, 0, 0, 1])
 
-        path = "cached_set_train.json"
+        path = "cached_set_moon_train_vp.json"
         # if valid:
         #     print("valid data load!!")
         #     path = "cached_set_val.json"
@@ -49,6 +50,9 @@ class Matterport(RGBDDataset):
         for i in range(len(split["data"])):
             images = []
             lines = []
+            vp1 = []
+            vp2 = []
+            vps = []
             for imgnum in ["0", "1"]:
                 img_name = os.path.join(
                     self.root,
@@ -57,7 +61,11 @@ class Matterport(RGBDDataset):
                 line_name = img_name.split("/")
                 line_name[9] = img_name.split("/")[9].split(".")[0] + "_line.csv"
                 line_name = "/".join(line_name)
-
+                vp1 = split["data"][i][imgnum]['vp1']
+                vp2 = split["data"][i][imgnum]['vp2']
+                vp3 = split["data"][i][imgnum]['vp3']
+                gt_vps = np.array([vp1,vp2,vp3])
+                vps.append(gt_vps)
                 images.append(img_name)
                 lines.append(line_name)
 
@@ -86,6 +94,7 @@ class Matterport(RGBDDataset):
             scene_info["poses"] += [poses]
             scene_info["intrinsics"] += [intrinsics]
             scene_info["lines"].append(lines)
+            scene_info['vps'].append(vps)
 
         return scene_info
 

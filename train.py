@@ -1,6 +1,6 @@
 import numpy as np
 from collections import OrderedDict
-
+import torch.nn.functional as F
 import cv2
 import torch
 import torch.optim as optim
@@ -22,10 +22,14 @@ import torch.multiprocessing as mp
 import torch.distributed as dist
 from torch.nn.parallel import DistributedDataParallel as DDP
 
+from util import build_matcher
+
 from tqdm import tqdm
 import random
 from datetime import datetime
 import os
+
+torch.autograd.set_detect_anomaly(True)
 
 def setup_ddp(gpu, args):
     dist.init_process_group(                                   
@@ -36,6 +40,32 @@ def setup_ddp(gpu, args):
 
     torch.manual_seed(0)
     torch.cuda.set_device(gpu)
+
+def _get_src_permutation_idx(indices):
+    # permute predictions following indices
+    batch_idx = torch.cat([torch.full_like(src, i) for i, (src, _) in enumerate(indices)])
+    src_idx = torch.cat([src for (src, _) in indices])
+    return batch_idx, src_idx
+
+def _get_tgt_permutation_idx(indices):
+    # permute targets following indices
+    batch_idx = torch.cat([torch.full_like(tgt, i) for i, (_, tgt) in enumerate(indices)])
+    tgt_idx = torch.cat([tgt for (_, tgt) in indices])
+    return batch_idx, tgt_idx
+
+def loss_vp1(pred_vp1,pred_vp2,pred_vp3, vps,indices, **kwargs):
+    pred_vp1 = pred_vp1
+    pred_vp2 = pred_vp2
+    pred_vp3 = pred_vp3
+    pred_vp = torch.cat([torch.cat([pred_vp1.unsqueeze(1),pred_vp2.unsqueeze(1)],dim=1),pred_vp3.unsqueeze(1)],dim=1)
+    tgt_vp = vps
+    src_idx = _get_src_permutation_idx(indices)
+    tgt_idx = _get_tgt_permutation_idx(indices)
+
+    cos_sim = F.cosine_similarity(pred_vp[src_idx], tgt_vp[tgt_idx], dim=-1).abs()      
+    loss_vp1_cos = (1.0 - cos_sim).mean()
+            
+    return loss_vp1_cos
 
 def train(gpu, args):
     """ Test to make sure project transform correctly maps points """
@@ -57,6 +87,8 @@ def train(gpu, args):
     wandb.watch(model)
     model.to(thiscuda)
     model.train()
+
+    matcher = build_matcher(cfg)
         
     # unused layers
     # for param in model.resnet.layer4.parameters():
@@ -142,23 +174,46 @@ def train(gpu, args):
             for i_batch, item in enumerate(tepoch):
                 optimizer.zero_grad()
 
-                images, poses, intrinsics, lines = [x.to('cuda') for x in item]
+                images, poses, intrinsics, lines, vps = [x.to('cuda') for x in item]
+                
+                vps = vps.permute(1,0,2,3)
+
                 Ps = SE3(poses)
-                Gs = SE3.IdentityLike(Ps)
+                Gs= SE3.IdentityLike(Ps)
                 Ps_out = SE3(Ps.data.clone())
                                    
-                metrics = {}
+                metrics = {}  
 
+                vps_metric = {}
+                #loss_dic = {}
                 if not is_training:
                     with torch.no_grad():
+                        # poses_est,pred1_vp1,pred1_vp2,pred1_vp3,pred2_vp1,pred2_vp2,pred2_vp3 = model(images, lines, Gs)
                         poses_est = model(images, lines, Gs)
+                        
+                        # indices1 = matcher(pred1_vp1,pred1_vp2,pred1_vp3,vps[0])
+                        # indices2 = matcher(pred2_vp1,pred2_vp2,pred2_vp3,vps[1])
+
+                        # img1_vp_loss = loss_vp1(pred1_vp1,pred1_vp2,pred1_vp3,vps[0],indices1)
+                        # img2_vp_loss = loss_vp1(pred2_vp1,pred2_vp2,pred2_vp3,vps[1],indices2)
                         geo_loss_tr, geo_loss_rot, geo_metrics = geodesic_loss(Ps_out, poses_est, train_val=train_val)
+                
                 else:
                     poses_est = model(images, lines, Gs)
                     geo_loss_tr, geo_loss_rot, geo_metrics = geodesic_loss(Ps_out, poses_est, train_val=train_val)
-
-                    loss = args.w_tr * geo_loss_tr + args.w_rot * geo_loss_rot
-
+                    
+                    # indices1 = matcher(pred1_vp1,pred1_vp2,pred1_vp3,vps[0])
+                    # indices2 = matcher(pred2_vp1,pred2_vp2,pred2_vp3,vps[1])
+                    
+                    # img1_vp_loss = loss_vp1(pred1_vp1,pred1_vp2,pred1_vp3,vps[0],indices1)
+                    # img2_vp_loss = loss_vp1(pred2_vp1,pred2_vp2,pred2_vp3,vps[1],indices2)
+                    # vp_metric = {
+                    #     train_val+'img1_vp_loss': (img1_vp_loss).detach().item(),
+                    #     train_val+'img2_vp_loss': (img2_vp_loss).detach().item(),
+                    # }
+                    loss = args.w_tr * geo_loss_tr + args.w_rot * geo_loss_rot #+ 10*img1_vp_loss + 10*img2_vp_loss #+ args.vp_rot * vp_loss_rot 
+                    # print("img1_vp_loss",img1_vp_loss)
+                    # print("img2_vp_loss",img2_vp_loss)
                     loss.backward()
                     torch.nn.utils.clip_grad_norm_(model.parameters(), args.clip)
                     optimizer.step()
@@ -167,25 +222,32 @@ def train(gpu, args):
                     scheduler.step() 
                     train_steps += 1
                 
-                metrics.update(geo_metrics)                                    
+                metrics.update(geo_metrics)
+                #vps_metric.update(vp_metric)
+
+                            
 
                 if gpu == 0 or args.no_ddp:
                     logger.push(metrics)
+
 
                     if i_batch % 20 == 0:
                         torch.set_printoptions(sci_mode=False, linewidth=150)
                         for local_index in range(len(poses_est)):
                             print('pred number:', local_index)
-                            print('\n estimated pose')
+                            print('\n estimated pose1')
                             print(poses_est[local_index].data[0,:7,:].cpu().detach())
+
                             print('ground truth pose')
                             print(Ps_out.data[0,:7,:].cpu().detach())
                             print('')
                     if (i_batch + 10) % 20 == 0:
                         print('\n metrics:', metrics, '\n')
+                        #print('\nv vps_metrics:',vps_metric)
                         print("train steps:",train_steps)
                         wandb.log({
-                            'metrics':metrics
+                            'metrics':metrics,
+                            #'vps_metrics':vps_metric
                         })
                     if i_batch % 100 == 0:
                         print('epoch', str(epoch_count))
@@ -227,10 +289,11 @@ if __name__ == '__main__':
     # training
     parser.add_argument('--w_tr', type=float, default=10.0)
     parser.add_argument('--w_rot', type=float, default=10.0)
+    parser.add_argument('--vp_rot',type=float, default=1.0)
     parser.add_argument('--warmup', type=int, default=10000)    
     # parser.add_argument('--batch', type=int, default=1)
-    parser.add_argument('--steps', type=int, default=300000)
-    parser.add_argument('--lr', type=float, default=1e-5)
+    parser.add_argument('--steps', type=int, default=130000)
+    parser.add_argument('--lr', type=float, default=5e-4)
     parser.add_argument('--clip', type=float, default=2.5)
     parser.add_argument('--weight_decay', type=float, default=1e-5)
     parser.add_argument('--num_workers', type=int, default=4)
@@ -240,22 +303,12 @@ if __name__ == '__main__':
     parser.add_argument('--name', default='bla', help='name your experiment')
     # data
     parser.add_argument("--datapath")
-    parser.add_argument("--image_size", default=[384,512])
+    parser.add_argument("--image_size", default=[480,640])
     parser.add_argument("--exp")
     parser.add_argument('--use_mini_dataset', action='store_true')
     parser.add_argument('--streetlearn_interiornet_type', default='', choices=('',"T"))
     parser.add_argument('--dataset', default='matterport', choices=("matterport", "interiornet", 'streetlearn'))
 
-    #model
-    parser.add_argument('--no_pos_encoding', action='store_true')
-    parser.add_argument('--noess', action='store_true')
-    parser.add_argument('--cross_features', action='store_true')
-    parser.add_argument('--use_single_softmax', action='store_true')  
-    parser.add_argument('--l1_pos_encoding', action='store_true')
-    parser.add_argument('--fusion_transformer', action="store_true", default=False)
-    parser.add_argument('--fc_hidden_size', type=int, default=512)
-    parser.add_argument('--pool_size', type=int, default=60)
-    parser.add_argument('--transformer_depth', type=int, default=6)
 
     args = parser.parse_args()
     wandb.config.update(args)

@@ -5,7 +5,20 @@ output/
 wandb/
 __pycache__/
 checkpoint/
+test_folder/
+test_file/
+wandb/
+test_data/
+
 
 ## 파일 무시
 nohup.out
 LSD.py
+count_plane_parameter.ipynb
+preprocessing_json.ipynb
+preprocessing_VPVP.ipynb
+test_test_loader.ipynb
+matterport_vis_cuti.py
+
+pred_vp,GT_quaternion.json
+test.json

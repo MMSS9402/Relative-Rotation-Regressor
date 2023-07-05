@@ -2,7 +2,7 @@ import copy
 from config import cfg
 import torch
 import torch.nn as nn
-from .linear_attention import LinearAttention, FullAttention, FulllSelfAttention
+from .linear_attention import LinearAttention, FullAttentionDualSoftmax, FullAttention
 
 
 class CuTiEncoderLayer(nn.Module):
@@ -20,8 +20,8 @@ class CuTiEncoderLayer(nn.Module):
         self.q_proj = nn.Linear(d_model, d_model, bias=False)
         self.k_proj = nn.Linear(d_model, d_model, bias=False)
         self.v_proj = nn.Linear(d_model, d_model, bias=False)
-        self.attention = FulllSelfAttention()#LinearAttention() #if attention == 'linear' else FullAttention()
-        self.cross_attention = FullAttention()
+        self.attention = LinearAttention()#LinearAttention() #if attention == 'linear' else FullAttention()
+        self.cross_attention = FullAttentionDualSoftmax()
         # self.attention = CuTiSelfAttention(d_model,nhead)
         # self.cross_attention = CuTiCrossAttention(d_model,nhead)
         self.merge = nn.Linear(d_model, d_model, bias=False)
@@ -46,23 +46,22 @@ class CuTiEncoderLayer(nn.Module):
             source_mask (torch.Tensor): [N, S] (optional)
         """
         if(mode == 'self'):
-            bs = x.size(0)
+            bs = x.size(0) 
             dec_lay = x.size(1)
-            self.line_num = x.size(2)
             query, key, value = x, source, source
 
             # multi-head attention
-            query = self.q_proj(query).view(bs, dec_lay, self.line_num,self.nhead, self.dim)  # [N, L, (H, D)]
-            key = self.k_proj(key).view(bs, dec_lay, self.line_num,self.nhead, self.dim)  # [N, S, (H, D)]
-            value = self.v_proj(value).view(bs, dec_lay, self.line_num,self.nhead, self.dim)
+            query = self.q_proj(query).view(bs, -1, self.nhead, self.dim)  # [N, L, (H, D)]
+            key = self.k_proj(key).view(bs, -1, self.nhead, self.dim)  # [N, S, (H, D)]
+            value = self.v_proj(value).view(bs, -1, self.nhead, self.dim)
             #message = self.attention(query, key, value, q_mask=x_mask, kv_mask=source_mask)  # [N, L, (H, D)]
             #message = self.attention(query,key,value=value,attn_mask=None,key_padding_mask=None)
             message = self.attention(query,key,value,None,None)
-            message = self.merge(message.view(bs, dec_lay,  self.line_num, self.nhead*self.dim))  # [N, L, C]
+            message = self.merge(message.view(bs, -1, self.nhead*self.dim))  # [N, L, C]
             message = self.norm1(message)
 
             # feed-forward network
-            message = self.mlp(torch.cat([x, message], dim=3))
+            message = self.mlp(torch.cat([x, message], dim=2))
             message = self.norm2(message)
 
             return x + message
@@ -71,15 +70,15 @@ class CuTiEncoderLayer(nn.Module):
             dec_lay = x.size(1)
             self.line_num = x.size(2)
             query, key, value = x, source, source
-            query = self.q_proj(query).view(bs, dec_lay, self.line_num,self.nhead, self.dim) # [N, L, (H, D)]
-            key = self.k_proj(key).view(bs, dec_lay, self.line_num,self.nhead, self.dim)#.view(bs, -1, self.nhead, self.dim)  # [N, S, (H, D)]
-            value = self.v_proj(value).view(bs, dec_lay, self.line_num,self.nhead, self.dim)#.view(bs, -1, self.nhead, self.dim)
+            query = self.q_proj(query).view(bs, -1, self.nhead, self.dim) # [N, L, (H, D)]
+            key = self.k_proj(key).view(bs, -1, self.nhead, self.dim)#.view(bs, -1, self.nhead, self.dim)  # [N, S, (H, D)]
+            value = self.v_proj(value).view(bs, -1, self.nhead, self.dim)#.view(bs, -1, self.nhead, self.dim)
             message = self.cross_attention(query, key, value,None,None)
             #message = self.cross_attention(query,key,value)
-            message = self.merge(message.view(bs, dec_lay, self.line_num, self.nhead*self.dim))  # [N, L, C]
+            message = self.merge(message.view(bs, -1, self.nhead*self.dim))  # [N, L, C]
             message = self.norm1(message)
             
-            message = self.mlp(torch.cat([x, message], dim=3))
+            message = self.mlp(torch.cat([x, message], dim=2))
             message = self.norm2(message)
             return x + message
 
@@ -111,7 +110,7 @@ class CuTiTransformer(nn.Module):
             mask1 (torch.Tensor): [N, S] (optional)
         """
         #print("cuti_cuti:",feat0.shape)
-        assert self.d_model == feat0.size(3), "the feature number of src and transformer must be equal"
+        assert self.d_model == feat0.size(2), "the feature number of src and transformer must be equal"
 
         for layer, name in zip(self.layers, self.layer_names):
             if name == 'self':

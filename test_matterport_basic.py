@@ -25,6 +25,8 @@ import numpy.linalg as LA
 import csv
 from lietorch import SE3
 
+import glm
+
 DEPTH_SCALE = 5
 
 def normalize_segs( lines, pp, rho):
@@ -71,6 +73,11 @@ def read_line_file(filename, min_line_length=10):
     lengths = LA.norm(segs[:, 2:] - segs[:, :2], axis=1)
     segs = segs[lengths > min_line_length]
     return segs
+def coordinate_yup(segs,org_h):
+        H = np.array([0,org_h,0,org_h])
+        segs[:,1] = -segs[:,1]
+        segs[:,3] = -segs[:,3]
+        return(H+segs)
 
 def eval_camera(predictions):
     acc_threshold = {
@@ -84,9 +91,13 @@ def eval_camera(predictions):
     gt_tran = np.vstack(predictions["camera"]["gts"]["tran"])
     gt_rot = np.vstack(predictions["camera"]["gts"]["rot"])
 
+    # VP_rot = np.vstack(predictions['VP_rot']['preds'])
+    # VP_gt = np.vstack(predictions['VP_rot']['gt'])
+
     top1_error = {
         "tran": np.linalg.norm(gt_tran - pred_tran, axis=1),
         "rot": 2 * np.arccos(np.clip(np.abs(np.sum(np.multiply(pred_rot, gt_rot), axis=1)), -1.0, 1.0)) * 180 / np.pi,
+        #"vp_rot" : 2 * np.arccos(np.clip(np.abs(np.sum(np.multiply(VP_rot, VP_gt ), axis=1)), -1.0, 1.0)) * 180 / np.pi
     }
     top1_accuracy = {
         "tran": (top1_error["tran"] < acc_threshold["tran"]).sum()
@@ -97,10 +108,14 @@ def eval_camera(predictions):
     camera_metrics = {
         f"top1 T err < {acc_threshold['tran']}": top1_accuracy["tran"] * 100,
         f"top1 R err < {acc_threshold['rot']}": top1_accuracy["rot"] * 100,
+        #f"VP" : top1_accuracy["vp_rot"] * 100,
         f"T mean err": np.mean(top1_error["tran"]),
         f"R mean err": np.mean(top1_error["rot"]),
         f"T median err": np.median(top1_error["tran"]),
         f"R median err": np.median(top1_error["rot"]),
+        # f"VP_rot" : VP_rot,
+        # f"VP_gt" : VP_gt,
+        # f"VP_error" : np.sum(np.abs(VP_rot - VP_gt))/len(VP_rot)
     }
     
     gt_mags = {"tran": np.linalg.norm(gt_tran, axis=1), "rot": 2 * np.arccos(gt_rot[:,0]) * 180 / np.pi}
@@ -112,6 +127,10 @@ def eval_camera(predictions):
     rot_graph = np.stack([gt_mags['rot'], top1_error['rot']],axis=1)
     rot_graph_name = os.path.join('output', args.exp, output_folder, 'gt_rotation_magnitude_vs_error.csv')
     np.savetxt(rot_graph_name, rot_graph, delimiter=',', fmt='%1.5f')
+
+    # vprot_graph = np.stack([VP_rot, VP_gt],axis=1)
+    # rot_graph_name = os.path.join('output', args.exp, output_folder, 'VProt_vs_gt_rot.csv')
+    # np.savetxt(rot_graph_name, rot_graph, delimiter=',', fmt='%1.5f')
     
     return camera_metrics
 
@@ -121,7 +140,7 @@ if __name__ == '__main__':
     # data
     parser.add_argument("--datapath")
     parser.add_argument("--weights")
-    parser.add_argument("--image_size", default=[384,512])
+    parser.add_argument("--image_size", default=[480,640])
     parser.add_argument("--exp")
     parser.add_argument("--ckpt")
     parser.add_argument('--gamma', type=float, default=0.9)    
@@ -161,7 +180,7 @@ if __name__ == '__main__':
     model = model.cuda().eval()
     
     train_val = ''
-    predictions = {'camera': {'preds': {'tran': [], 'rot': []}, 'gts': {'tran': [], 'rot': []}}}
+    predictions = {'VP_rot':{'preds':[],'gt':[]},'camera': {'preds': {'tran': [], 'rot': []}, 'gts': {'tran': [], 'rot': []}}}
 
     for i in tqdm(range(len(dset['data']))):
         images = []
@@ -172,18 +191,19 @@ if __name__ == '__main__':
             images.append(cv2.imread(img_name))
             #print(img_name)
             line_name = img_name.split("/")
-            line_name[8] = img_name.split("/")[8].split(".")[0] + "_line.csv"
+            line_name[9] = img_name.split("/")[9].split(".")[0] + "_line.csv"
             line_name = "/".join(line_name)
             lines.append(read_line_file(line_name,10))
 
-        pp = (384 / 2, 512 / 2)
-        rho = 2.0 / np.minimum(384,512)
+        pp = (640 / 2, 480 / 2)
+        rho = 2.0 / np.minimum(640,480)
+        lines[0] = coordinate_yup(lines[0],480)
         lines[0] = normalize_segs(lines[0], pp=pp, rho=rho)
-        lines[0] = sample_segs_np(lines[0], 128)
+        lines[0] = sample_segs_np(lines[0], 512)
         lines[0] = segs2lines_np(lines[0])
-
+        lines[1] = coordinate_yup(lines[1],480)
         lines[1] = normalize_segs(lines[1], pp=pp, rho=rho)
-        lines[1] = sample_segs_np(lines[1], 128)
+        lines[1] = sample_segs_np(lines[1], 512)
         lines[1] = segs2lines_np(lines[1])
 
         lines = np.array(lines)
@@ -194,7 +214,7 @@ if __name__ == '__main__':
         images = np.stack(images).astype(np.float32)
         images = torch.from_numpy(images).float()
         images = images.permute(0, 3, 1, 2)
-        images = F.interpolate(images, size=[384,512])
+        images = F.interpolate(images, size=[480,640])
         images = images.unsqueeze(0).cuda()
         #print(images.shape)
         intrinsics = np.stack([np.array([[517.97, 517.97, 320, 240], [517.97, 517.97, 320, 240]])]).astype(np.float32)
@@ -207,8 +227,18 @@ if __name__ == '__main__':
                     
         with torch.no_grad():
             poses_est = model(images, lines, Gs)
-            
-         
+        #print("++++++",poses_est2)
+        #preds2 = poses_est2[0][0][1].data.cpu().numpy()
+        # pr_copy2 = np.copy(preds2)
+        # preds2[3] = pr_copy2[6] # swap 3 & 6, we used W last; want W first in quat
+        # preds2[6] = pr_copy2[3]
+        # preds2[:3] = preds2[:3] * DEPTH_SCALE 
+        # VP_rot = preds2[3:]
+        # #VP_rot = glm.eulerAngles(VP_rot)
+
+
+        #predictions['VP_rot']['preds'].append(VP_rot)
+
 
         predictions['camera']['gts']['tran'].append(dset['data'][i]['rel_pose']['position'])
         gt_rotation = dset['data'][i]['rel_pose']['rotation']
@@ -221,6 +251,9 @@ if __name__ == '__main__':
             gt_rotation[2] *= -1
             gt_rotation[3] *= -1
         predictions['camera']['gts']['rot'].append(gt_rotation)
+        #gt_rot = glm.eulerAngles(gt_rotation)
+        #gt_rot = gt_rotation
+        #predictions['VP_rot']['gt'].append(gt_rot)
 
         preds = poses_est[0][0][1].data.cpu().numpy()    
         pr_copy = np.copy(preds)
@@ -229,7 +262,9 @@ if __name__ == '__main__':
         preds[3] = pr_copy[6] # swap 3 & 6, we used W last; want W first in quat
         preds[6] = pr_copy[3]
         preds[:3] = preds[:3] * DEPTH_SCALE 
-
+        # print("VPROT",VP_rot)
+        # print("gt",gt_rot)
+        #print('error',np.abs(VP_rot-gt_rot))
         predictions['camera']['preds']['tran'].append(preds[:3])
         predictions['camera']['preds']['rot'].append(preds[3:])
 

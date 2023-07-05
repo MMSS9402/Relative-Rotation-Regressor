@@ -2,55 +2,106 @@ from ctrlc import transformer
 import torch
 import torch.nn as nn
 import lietorch
+import numpy as np
+import numpy.linalg as LA
 from lietorch import SE3
+
+from util.position_encoding import build_pos_sine
+
+from typing import Optional
+import torch.nn.functional as F
+import torch.linalg
+
+# import pytorch3d
+# from pytorch3d import transforms
 
 from ctrlc import build_ctrl
 from ctrlc.backbone import build_backbone
 from ctrlc.transformer import build_transformer
 from loftr import build_cuti_module
+from loftr import build_cuti_encoder
+from einops.einops import rearrange
+# import torch_geometric as tgm
 from config import cfg
 
 
 class CuTi(nn.Module):
-    def __init__(self, backbone, ctrlc, cuti_module, decoder_layer):
+    def __init__(self, ctrlc1,ctrlc2, cuti_encoder1,cuti_encoder2,cuti_module1,cuti_module2, decoder_layer,PositionEncodingSine):
         super().__init__()
         self.pose_size = 7
         self.num_images = 2
         
+        #self.batch_size = cfg.SOLVER.BATCH_SIZE
+        self.line_num = 512
+        self.hidden_dim = 256
+
+        self.embedding1 = nn.Embedding(self.num_images,self.hidden_dim)
+
+        self.feature_resolution = (15, 20)
         
-        self.batch_size = cfg.SOLVER.BATCH_SIZE
-        self.line_num = 128
-        self.hidden_dim = 64
+        self.intrinsic_matrix = torch.tensor([[517.97,0,320],
+                                          [0,517.97,240],
+                                            [0,0,1]])
         
-        self.ctrlc1 = ctrlc
-        self.ctrlc2 = ctrlc
-        self.backbone = backbone
-        self.cuti_module = cuti_module
+        self.ctrlc1 = ctrlc1
+        self.ctrlc2 = ctrlc2
+
+        self.cuti_encoder1 = cuti_encoder1
+        self.cuti_encoder2 = cuti_encoder2
+
+        self.cuti_module1 = cuti_module1
+        self.cuti_module2 = cuti_module2
         self.decoder_layer = decoder_layer
 
+        self.pos_encoding = PositionEncodingSine
+
+        #mlp
+        self.mlp1 = nn.Sequential(
+            nn.Linear(6,6),
+            nn.ReLU(),
+            nn.Linear(6,1)
+
+        )
+        self.mlp2 = nn.Sequential(
+            nn.Linear(6,6),
+            nn.ReLU(),
+            nn.Linear(6,1)
+
+        )
+
         #demension check
-        self.layer1 = nn.Linear(6*self.hidden_dim,self.hidden_dim)
-        self.layer2 = nn.Linear(6*self.hidden_dim,self.hidden_dim)
+        self.layer1 = nn.Sequential(
+            nn.Linear(2*self.hidden_dim,2*self.hidden_dim),
+            nn.ReLU(),
+            nn.Linear(2*self.hidden_dim,self.hidden_dim)
+        )
+        #self.layer2 = nn.Linear(2*self.hidden_dim,self.hidden_dim)
         
         #1/2 layer
-        self.layer3 = nn.Linear(2*self.hidden_dim,self.hidden_dim)
+        #self.layer3 = nn.Linear(2*self.hidden_dim,self.hidden_dim)
         #dimension
-        self.H = int(6*self.line_num * self.hidden_dim)
-        self.H2 = int(6*self.line_num * self.hidden_dim/4)
-        self.H3 = int(6*self.line_num * self.hidden_dim/16)
-        self.H4 = int(6*self.line_num * self.hidden_dim/64)
-        
+        self.pool_feat1 = 32
+        self.pool_feat2 = 16
+
+        self.K = int(self.num_images*self.pool_feat2*(self.line_num+self.feature_resolution[0]*self.feature_resolution[1]))
+        self.K2 = 60
         #pos_regressor
-        self.pose_regressor = nn.Sequential(
-                nn.Linear(self.H, self.H2),
-                nn.ReLU(),
-                nn.Linear(self.H2, self.H3),
-                nn.ReLU(),
-                nn.Linear(self.H3, self.H4),
-                nn.ReLU(), 
-                nn.Linear(self.H4, self.num_images * self.pose_size),
-                nn.Unflatten(1, (self.num_images, self.pose_size))
-            )
+        self.pool_attn1 = nn.Sequential(
+            nn.Conv2d(self.hidden_dim, self.pool_feat1, kernel_size=1, bias=True),
+            nn.BatchNorm2d(self.pool_feat1),
+            nn.ReLU(),
+            nn.Conv2d(self.pool_feat1, self.pool_feat2, kernel_size=1, bias=True),
+            nn.BatchNorm2d(self.pool_feat2)
+        )
+        self.pose_regressor1 = nn.Sequential(
+            nn.Linear(self.K, self.K2),
+            nn.ReLU(),
+            nn.Linear(self.K2, self.K2),
+            nn.ReLU(), 
+            nn.Linear(self.K2, self.num_images * 7),
+            nn.Unflatten(1, (self.num_images, 7))
+        )
+
     def normalize_preds(self, Gs, pose_preds):
         pred_out_Gs = SE3(pose_preds)
         
@@ -70,41 +121,60 @@ class CuTi(nn.Module):
         out_Gs = [these_out_Gs]
 
         return out_Gs
+    
 
+    
+
+
+    
     def forward(self, images, lines, Gs):#수정 필요
-        # ctrlc model
-        # print(images.shape)
-        # print(lines.shape) #[Batch_size,num_image,lline_num,line,3]
-        lines = lines.permute(1,0,2,3)
-        images = images.permute(1,0,2,3,4)
-        #print("cuti_input images",images.shape)
-        hs1,memory1 = self.ctrlc1(          #[dec_lay,bs,line_num,hidden_dim]
+        
+        lines = lines.permute(1,0,2,3) #[img_num,B,line_num,3]
+        images = images.permute(1,0,2,3,4) #[img_num,B,C,H,W]
+        
+        #CTRL_C 모델에 Line,image 정보 넣어주기
+        #hs1,memory1,pred1_zvp,pred1_h1vp,pred1_h2vp,pred1_vw,pred1_h1w,pred1_h2w
+        hs1,memory1,pred1_vp1,pred1_vp2,pred1_vp3= self.ctrlc1(          #[dec_lay,bs,line_num,hidden_dim]
             images[0],
             lines[0]
             )
-        
-        hs2,memory2 = self.ctrlc2(          #[dec_lay,bs,line_num,hidden_dim]
+        #hs2,memory2,pred2_zvp,pred2_h1vp,pred2_h2vp,pred2_vw,pred2_h1w,pred2_h2w
+        hs2,memory2,pred2_vp1,pred2_vp2,pred2_vp3 = self.ctrlc2(          #[dec_lay,bs,line_num,hidden_dim]
             images[1],
             lines[1]
         )
-        print("90",memory1.shape)
-        #permute hs1,hs2
-        hs1 = hs1.permute(1,0,2,3)  #[bs,dec_lay,line_num,hidden_dim]
-        hs2 = hs2.permute(1,0,2,3)  #[bs,dec_lay,line_num,hidden_dim]
+
+        self.batch_size = hs1.size(1)
+        ## ctrl-c에서 dec_layer의 모든 출력이 stack되서 나온 출력을 mlp를 통과시켜서 하나로 만들고 차원 축소해주기
+        hs1 = hs1.permute(1,2,3,0)
+        hs2 = hs2.permute(1,2,3,0)
+        hs1 = self.mlp1(hs1)
+        hs2 = self.mlp2(hs2)
+        hs1 = hs1.squeeze(3)
+        hs2 = hs2.squeeze(3)
+
+        #print("memory1.shape",memory1.shape)
+        # feature information 차원 맞추기
+        memory1 = memory1.reshape(self.batch_size,-1,self.hidden_dim) 
+        memory2 = memory2.reshape(self.batch_size,-1,self.hidden_dim)
+
+        #image feature, line feature concatenate
+        F1 = torch.cat([memory1,hs1],dim=1)
+        F2 = torch.cat([memory2,hs2],dim=1)
+        # print("F1.shape",F1.shape)
+        # print("F2.shape",F2.shape)
+       
+        F1,F2 = self.cuti_encoder1(F1,F2,None,None)
+
+        output = torch.cat([F1.unsqueeze(0),F2.unsqueeze(0)],dim=0)
+        output = output.reshape([self.batch_size,self.num_images,(self.line_num+self.feature_resolution[0]*self.feature_resolution[1]),-1]).permute([0,3,1,2])
+
         
-        # insert hs1,hs2 cuti module
-        #print("111",hs1.shape)
-        hs1 , hs2 = self.cuti_module(hs1,hs2,None,None)
+        pooled_output1 = self.pool_attn1(output)
+        pose_preds1 = self.pose_regressor1(pooled_output1.reshape([self.batch_size, -1]))
+
         
-        output =  torch.cat([hs1,hs2], dim=3)
-        output = self.layer3(output)
-
-        Batch_size, dec_lay, _, _ = output.shape
-        output = output.reshape([Batch_size,-1])
-
-        pose_preds = self.pose_regressor(output)
-
-        return self.normalize_preds(Gs, pose_preds)
+        return self.normalize_preds(Gs, pose_preds1)#,pred1_vp1,pred1_vp2,pred1_vp3,pred2_vp1,pred2_vp2,pred2_vp3#,pred1_vw_count,pred1_h1w_count,pred1_h2w_count,pred2_vw_count,pred2_h1w_count,pred2_h2w_count#,R21_to_Q,R22_to_Q,R23_to_Q,R24_to_Q
         
 
 
@@ -112,19 +182,28 @@ class CuTi(nn.Module):
 def build(cfg):
     device = torch.device(cfg.DEVICE)
 
-    ctrl = build_ctrl(cfg)
-    checkpoint = torch.load("/home/kmuvcl/source/oldCuTi/CuTi/checkpoint/checkpoint.pth")
+    ctrl1 = build_ctrl(cfg)
+    ctrl2 = build_ctrl(cfg)
+    checkpoint = torch.load("/home/kmuvcl/source/oldCuTi/CuTi/checkpoint/checkpoint0099.pth")
 
 
-    ctrl.load_state_dict(checkpoint['model'],False)
+    ctrl1.load_state_dict(checkpoint['model'],False)
+    ctrl2.load_state_dict(checkpoint['model'],False)
     
-    # ctrl.eval()
+    ctrl1.eval()
+    ctrl2.eval()
+    print("CTRL_C model load & Freeze")
+    print("Line segemnt masking!!")
+    print("image feature attention")
     del checkpoint
-    cuti_module = build_cuti_module(cfg)
-    backbone = build_backbone(cfg)
+    cuti_module1 = build_cuti_module(cfg)
+    cuti_module2 = build_cuti_module(cfg)
+    cuti_encoder1 = build_cuti_encoder(cfg)
+    cuti_encoder2 = build_cuti_encoder(cfg)
+    PositionEncodingSine = build_pos_sine(cfg)
     decoder_layer = cfg.MODELS.TRANSFORMER.DEC_LAYERS
 
-    model = CuTi(backbone, ctrl, cuti_module,decoder_layer) 
+    model = CuTi(ctrl1,ctrl2,cuti_encoder1,cuti_encoder2, cuti_module1,cuti_module2,decoder_layer,PositionEncodingSine) 
 
     return model
 

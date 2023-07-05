@@ -61,7 +61,7 @@ class Transformer(nn.Module):
             if p.dim() > 1:
                 nn.init.xavier_uniform_(p)
 
-    def forward(self, src, mask, tgt, tgt_key_padding_mask, pos_embed):
+    def forward(self, src, mask, query_embed, tgt, tgt_key_padding_mask, pos_embed):
         # flatten NxCxHxW to HWxNxC
         num_queries = tgt.size(1)
 
@@ -70,16 +70,39 @@ class Transformer(nn.Module):
             2, 0, 1
         )  # flattem(2) -> [bs, c , h*w] -> permute(2,0,1) -> [h*w,bs,c]
         pos_embed = pos_embed.flatten(2).permute(2, 0, 1)  # [h*w,bs,c]
+        query_embed = query_embed.unsqueeze(1).repeat(
+            1, bs, 1
+        )
         tgt = tgt.permute(1, 0, 2)
+        # print("tgt",tgt.shape)
+        # print("query_pose",query_embed.shape)
+        # print("tgt_key",tgt_key_padding_mask.shape)
+        # print(c)
+        query_pos = torch.cat([query_embed, torch.zeros_like(tgt)], dim=0)
+        
+        tgt = torch.cat([torch.zeros_like(query_embed), tgt], dim=0)  # [n, bs, ch]
+        # print(tgt.shape)
+        # tgt_key_padding_mask = tgt_key_padding_mask.permute(1,0,2)
+        # tgt_key_padding_mask = torch.cat(
+        #     [
+        #         torch.zeros(
+        #             bs, query_embed.size(0),c, dtype=torch.bool, device=query_embed.device
+        #         ),
+        #         tgt_key_padding_mask,
+        #     ],
+        #     dim=0,
+        # )
+        # print("tgt_key",tgt_key_padding_mask.shape)
         mask = mask.flatten(1)  # [h*w]
 
         memory = self.encoder(src, src_key_padding_mask=mask, pos=pos_embed)
         hs = self.decoder(
             tgt,
             memory,
-            tgt_key_padding_mask=tgt_key_padding_mask,
+            tgt_key_padding_mask=None,
             memory_key_padding_mask=mask,
             pos=pos_embed,   
+            query_pos=query_pos
         )
         #print("memory_shape",memory.shape)
         #print("decoder shape",hs.shape)
@@ -87,7 +110,7 @@ class Transformer(nn.Module):
 
         return (
             hs.transpose(1, 2),  # hs [dec_ayer, bs, n, ch]
-            memory.permute(1, 0, 2)
+            memory.permute(1, 2, 0).view(bs, c, h, w)
         )  # dim of source
 
 
@@ -111,6 +134,7 @@ class TransformerEncoder(nn.Module):
         output = src
 
         
+        #print("encoder",src.shape)
 
         for layer in self.layers:
             # layer에서 나온 output들을 계속 다음 layer에 넣어줌
@@ -120,7 +144,7 @@ class TransformerEncoder(nn.Module):
                 src_key_padding_mask=src_key_padding_mask,
                 pos=pos,
             )
-        
+        #print("encoder",output.shape)
 
         if self.norm is not None:
             output = self.norm(output)
@@ -154,7 +178,7 @@ class TransformerDecoder(nn.Module):
 
         intermediate = []
 
-
+        #print("decoder_layer_tgt",output.shape  )
         # decoder layer를 반복하면서 이전 layer의 output 출력을 이후 layer에 넣어줌
         for layer in self.layers:
             output = layer(
@@ -167,13 +191,14 @@ class TransformerDecoder(nn.Module):
                 pos=pos,
                 query_pos=query_pos,
             )
+            
             # intermediate는 layer 중간중간 output들을 다 쌓아서 저장한 list
             # 마지막 output을 출력할 때 FFN를 5개를 써서 출력하기 때문에
             # 이걸 각각 loss를 나눠서 주려면 intermediate가 필요한 것이 아닐까..?
-
+            #print("중간 for문",output.shape)
             if self.return_intermediate:
                 intermediate.append(self.norm(output))
-        #print("decortr_layer_output",output.unsqueeze(0).shape)
+        #print("decortr_layer_output",output.shape)
 
         if self.norm is not None:
             output = self.norm(output)
@@ -183,7 +208,6 @@ class TransformerDecoder(nn.Module):
 
         if self.return_intermediate:
             return torch.stack(intermediate)
-
         return output.unsqueeze(0)
 
 
@@ -331,6 +355,8 @@ class TransformerDecoderLayer(nn.Module):
         # normalization
         tgt = self.norm1(tgt)
         # cross-attention(key,value가 memory로부터 옴 => encoder layer에서 src가 들어옴)
+        #print("차원계산(tgt)", tgt.shape)
+        #print("차원계산(memory)",memory.shape)
         tgt2, _ = self.multihead_attn(
             query=self.with_pos_embed(tgt, query_pos),
             key=self.with_pos_embed(memory, pos),
@@ -347,6 +373,7 @@ class TransformerDecoderLayer(nn.Module):
         # skip-conncetion & normalization
         tgt = tgt + self.dropout3(tgt2)
         tgt = self.norm3(tgt)
+        #print("디코더",tgt.shape)
         return tgt
 
     def forward_pre(
