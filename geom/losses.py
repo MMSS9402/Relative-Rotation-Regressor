@@ -15,7 +15,8 @@ def geodesic_loss(Ps, Gs, train_val='train'):
     #print("loss_d",d.data)
 
     tau, phi = d.split([3,3], dim=-1)
-    #print("tau",tau.data)
+    # print("tau",tau.data)
+    # print("phi",phi.data)
     geodesic_loss_tr = tau.norm(dim=-1).mean()
     geodesic_loss_rot = phi.norm(dim=-1).mean()
 

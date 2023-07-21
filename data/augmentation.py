@@ -54,6 +54,8 @@ class RGBDAugmentor:
             sampled_segs[:num_segs] = segs
             mask[:num_segs] = np.ones([num_segs, 1], dtype=np.float32)
         else:
+            # sampled_segs = segs[:num_sample]
+            # mask[:num_segs] = np.ones([num_sample, 1], dtype=np.float32)
             lengths = LA.norm(segs[:, 2:] - segs[:, :2], axis=-1)
             prob = lengths / np.sum(lengths)
             idxs = np.random.choice(segs.shape[0], num_sample, replace=True, p=prob)

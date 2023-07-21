@@ -5,7 +5,7 @@ from .linear_attention import LinearAttention, FullAttentionDualSoftmax, FullAtt
 from typing import Optional, List
 from torch import nn, Tensor
 import torch.nn.functional as F
-from . import multi_head_attention as mha
+#from . import multi_head_attention as mha
 
 class CuTiLayer(nn.Module):
     def __init__(self,
@@ -36,7 +36,7 @@ class CuTiLayer(nn.Module):
         self.norm1 = nn.LayerNorm(d_model)
         self.norm2 = nn.LayerNorm(d_model)
 
-    def forward(self, x, source, x_mask=None, source_mask=None):
+    def forward(self, x, source, x_mask=None, source_mask=None,mode=None,self_embedding=None,cross_embedding=None):
         """
         Args:
             x (torch.Tensor): [N, L, C]
@@ -48,9 +48,31 @@ class CuTiLayer(nn.Module):
         query, key, value = x, source, source
 
         # multi-head attention
-        query = self.q_proj(query).view(bs, -1, self.nhead, self.dim)  # [N, L, (H, D)]
-        key = self.k_proj(key).view(bs, -1, self.nhead, self.dim)  # [N, S, (H, D)]
-        value = self.v_proj(value).view(bs, -1, self.nhead, self.dim)
+        if mode == 'self':
+            #print("self 넣는 attention")
+            if self_embedding is not None:
+                query = self.q_proj(query+self_embedding).view(bs, -1, self.nhead, self.dim)  # [N, L, (H, D)]
+                key = self.k_proj(key+self_embedding).view(bs, -1, self.nhead, self.dim)  # [N, S, (H, D)]
+                value = self.v_proj(value).view(bs, -1, self.nhead, self.dim)
+            else:
+                query = self.q_proj(query).view(bs, -1, self.nhead, self.dim)  # [N, L, (H, D)]
+                key = self.k_proj(key).view(bs, -1, self.nhead, self.dim)  # [N, S, (H, D)]
+                value = self.v_proj(value).view(bs, -1, self.nhead, self.dim)
+                
+        elif mode == 'cross':
+            #print("cross 넣는 attention")
+            if cross_embedding is not None:
+                query = self.q_proj(query+cross_embedding).view(bs, -1, self.nhead, self.dim)  # [N, L, (H, D)]
+                key = self.k_proj(key+self_embedding).view(bs, -1, self.nhead, self.dim)  # [N, S, (H, D)]
+                value = self.v_proj(value).view(bs, -1, self.nhead, self.dim)
+            else:
+                query = self.q_proj(query).view(bs, -1, self.nhead, self.dim)  # [N, L, (H, D)]
+                key = self.k_proj(key).view(bs, -1, self.nhead, self.dim)  # [N, S, (H, D)]
+                value = self.v_proj(value).view(bs, -1, self.nhead, self.dim)
+        elif mode == None:
+            query = self.q_proj(query).view(bs, -1, self.nhead, self.dim)  # [N, L, (H, D)]
+            key = self.k_proj(key).view(bs, -1, self.nhead, self.dim)  # [N, S, (H, D)]
+            value = self.v_proj(value).view(bs, -1, self.nhead, self.dim)
         message = self.attention(query, key, value, q_mask=x_mask, kv_mask=source_mask)  # [N, L, (H, D)]
         message = self.merge(message.view(bs, -1, self.nhead*self.dim))  # [N, L, C]
         message = self.norm1(message)
@@ -81,7 +103,7 @@ class CuTiEncoder(nn.Module):
             if p.dim() > 1:
                 nn.init.xavier_uniform_(p)
 
-    def forward(self, feat0, feat1, mask0=None, mask1=None):
+    def forward(self, feat0, feat1, mask0=None, mask1=None,line1_embedding=None,line2_embedding=None):
         """
         Args:
             feat0 (torch.Tensor): [N, L, C]
@@ -95,12 +117,12 @@ class CuTiEncoder(nn.Module):
         for layer, name in zip(self.layers, self.layer_names):
             if name == 'self':
                 # print("self_encoder")
-                feat0 = layer(feat0, feat0, mask0, mask0)
-                feat1 = layer(feat1, feat1, mask1, mask1)
+                feat0 = layer(feat0, feat0, mask0, mask0,name,line1_embedding,None)
+                feat1 = layer(feat1, feat1, mask1, mask1,name,line2_embedding,None)
             elif name == 'cross':
                 # print("cross_encoder")
-                feat0 = layer(feat0, feat1, mask0, mask1)
-                feat1 = layer(feat1, feat0, mask1, mask0)
+                feat0 = layer(feat0, feat1, mask0, mask1,name,line1_embedding,line2_embedding)
+                feat1 = layer(feat1, feat0, mask1, mask0,name,line2_embedding,line1_embedding)
             else:
                 raise KeyError
 

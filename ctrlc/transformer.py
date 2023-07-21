@@ -61,7 +61,7 @@ class Transformer(nn.Module):
             if p.dim() > 1:
                 nn.init.xavier_uniform_(p)
 
-    def forward(self, src, mask, query_embed, tgt, tgt_key_padding_mask, pos_embed):
+    def forward(self, src, mask, query_embed, tgt, tgt_key_padding_mask, pos_embed):#,line_embed):
         # flatten NxCxHxW to HWxNxC
         num_queries = tgt.size(1)
 
@@ -79,6 +79,7 @@ class Transformer(nn.Module):
         # print("tgt_key",tgt_key_padding_mask.shape)
         # print(c)
         query_pos = torch.cat([query_embed, torch.zeros_like(tgt)], dim=0)
+        #query_pos = torch.cat([query_embed, line_embed], dim=0)
         
         tgt = torch.cat([torch.zeros_like(query_embed), tgt], dim=0)  # [n, bs, ch]
         # print(tgt.shape)

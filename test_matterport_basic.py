@@ -41,11 +41,13 @@ def sample_segs_np( segs, num_sample, use_prob=True):
         sampled_segs[:num_segs] = segs
         mask[:num_segs] = np.ones([num_segs, 1], dtype=np.float32)
     else:
-        lengths = LA.norm(segs[:, 2:] - segs[:, :2], axis=-1)
-        prob = lengths / np.sum(lengths)
-        idxs = np.random.choice(segs.shape[0], num_sample, replace=True, p=prob)
-        sampled_segs = segs[idxs]
-        mask = np.ones([num_sample, 1], dtype=np.float32)
+        sampled_segs = segs[:num_sample]
+        mask[:num_segs] = np.ones([num_sample, 1], dtype=np.float32)
+        # lengths = LA.norm(segs[:, 2:] - segs[:, :2], axis=-1)
+        # prob = lengths / np.sum(lengths)
+        # idxs = np.random.choice(segs.shape[0], num_sample, replace=True, p=prob)
+        # sampled_segs = segs[idxs]
+        # mask = np.ones([num_sample, 1], dtype=np.float32)
     return sampled_segs
 
 def normalize_safe_np( v, axis=-1, eps=1e-6):

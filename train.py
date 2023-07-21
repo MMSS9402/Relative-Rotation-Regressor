@@ -188,7 +188,7 @@ def train(gpu, args):
                 #loss_dic = {}
                 if not is_training:
                     with torch.no_grad():
-                        # poses_est,pred1_vp1,pred1_vp2,pred1_vp3,pred2_vp1,pred2_vp2,pred2_vp3 = model(images, lines, Gs)
+                        #poses_est,pred1_vp1,pred1_vp2,pred1_vp3,pred2_vp1,pred2_vp2,pred2_vp3 = model(images, lines, Gs)
                         poses_est = model(images, lines, Gs)
                         
                         # indices1 = matcher(pred1_vp1,pred1_vp2,pred1_vp3,vps[0])
@@ -208,8 +208,8 @@ def train(gpu, args):
                     # img1_vp_loss = loss_vp1(pred1_vp1,pred1_vp2,pred1_vp3,vps[0],indices1)
                     # img2_vp_loss = loss_vp1(pred2_vp1,pred2_vp2,pred2_vp3,vps[1],indices2)
                     # vp_metric = {
-                    #     train_val+'img1_vp_loss': (img1_vp_loss).detach().item(),
-                    #     train_val+'img2_vp_loss': (img2_vp_loss).detach().item(),
+                    #     train_val+'_img1_vp_loss': (img1_vp_loss).detach().item(),
+                    #     train_val+'_img2_vp_loss': (img2_vp_loss).detach().item(),
                     # }
                     loss = args.w_tr * geo_loss_tr + args.w_rot * geo_loss_rot #+ 10*img1_vp_loss + 10*img2_vp_loss #+ args.vp_rot * vp_loss_rot 
                     # print("img1_vp_loss",img1_vp_loss)
@@ -293,7 +293,7 @@ if __name__ == '__main__':
     parser.add_argument('--warmup', type=int, default=10000)    
     # parser.add_argument('--batch', type=int, default=1)
     parser.add_argument('--steps', type=int, default=130000)
-    parser.add_argument('--lr', type=float, default=5e-4)
+    parser.add_argument('--lr', type=float, default=1e-5)
     parser.add_argument('--clip', type=float, default=2.5)
     parser.add_argument('--weight_decay', type=float, default=1e-5)
     parser.add_argument('--num_workers', type=int, default=4)

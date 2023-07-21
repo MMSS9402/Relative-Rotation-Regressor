@@ -35,7 +35,8 @@ class CuTi(nn.Module):
         self.line_num = 512
         self.hidden_dim = 256
 
-        self.embedding1 = nn.Embedding(self.num_images,self.hidden_dim)
+        self.embedding_layer = nn.Embedding(self.num_images,self.hidden_dim)
+        self.position_embedding = nn.Embedding(self.line_num,self.hidden_dim)
 
         self.feature_resolution = (15, 20)
         
@@ -75,15 +76,11 @@ class CuTi(nn.Module):
             nn.ReLU(),
             nn.Linear(2*self.hidden_dim,self.hidden_dim)
         )
-        #self.layer2 = nn.Linear(2*self.hidden_dim,self.hidden_dim)
-        
-        #1/2 layer
-        #self.layer3 = nn.Linear(2*self.hidden_dim,self.hidden_dim)
         #dimension
         self.pool_feat1 = 32
         self.pool_feat2 = 16
 
-        self.K = int(self.num_images*self.pool_feat2*(self.line_num+self.feature_resolution[0]*self.feature_resolution[1]))
+        self.K = int(self.num_images*self.pool_feat2*(self.line_num))
         self.K2 = 60
         #pos_regressor
         self.pool_attn1 = nn.Sequential(
@@ -124,9 +121,6 @@ class CuTi(nn.Module):
     
 
     
-
-
-    
     def forward(self, images, lines, Gs):#수정 필요
         
         lines = lines.permute(1,0,2,3) #[img_num,B,line_num,3]
@@ -146,6 +140,7 @@ class CuTi(nn.Module):
 
         self.batch_size = hs1.size(1)
         ## ctrl-c에서 dec_layer의 모든 출력이 stack되서 나온 출력을 mlp를 통과시켜서 하나로 만들고 차원 축소해주기
+        ## [dec_lay,Batch_size,feature_resolution,hidden_dim] = > [Batch_size,feature_resolution,hidden_dim] 
         hs1 = hs1.permute(1,2,3,0)
         hs2 = hs2.permute(1,2,3,0)
         hs1 = self.mlp1(hs1)
@@ -153,23 +148,35 @@ class CuTi(nn.Module):
         hs1 = hs1.squeeze(3)
         hs2 = hs2.squeeze(3)
 
+        x = torch.tensor([0],dtype=torch.long).cuda()
+        y = torch.tensor([1],dtype=torch.long).cuda()
+        p = torch.arange(0,512,1,dtype=torch.long).cuda()
+
+        hs1 = hs1 + self.embedding_layer(x) + self.position_embedding(p)
+        hs2 = hs2 + self.embedding_layer(y) + self.position_embedding(p)
+        
+        line1_embedding = self.embedding_layer(x) + self.position_embedding(p)
+        line2_embedding = self.embedding_layer(y) + self.position_embedding(p)    
+        # memory1 = memory1 + self.embedding_layer(x)
+        # memory2 = memory2 + self.embedding_layer(x)
+
         #print("memory1.shape",memory1.shape)
         # feature information 차원 맞추기
-        memory1 = memory1.reshape(self.batch_size,-1,self.hidden_dim) 
-        memory2 = memory2.reshape(self.batch_size,-1,self.hidden_dim)
+        # memory1 = memory1.reshape(self.batch_size,-1,self.hidden_dim) 
+        # memory2 = memory2.reshape(self.batch_size,-1,self.hidden_dim)
 
         #image feature, line feature concatenate
-        F1 = torch.cat([memory1,hs1],dim=1)
-        F2 = torch.cat([memory2,hs2],dim=1)
+        F1 = hs1 #torch.cat([memory1,hs1],dim=1)
+        F2 = hs2 #torch.cat([memory2,hs2],dim=1)
+
         # print("F1.shape",F1.shape)
         # print("F2.shape",F2.shape)
-       
-        F1,F2 = self.cuti_encoder1(F1,F2,None,None)
+       #self.cuti_encoder1(F1,F2,None,None,line1_embedding,line2_embedding)
+        F1,F2 = self.cuti_encoder1(F1,F2,None,None,None,None)
 
         output = torch.cat([F1.unsqueeze(0),F2.unsqueeze(0)],dim=0)
-        output = output.reshape([self.batch_size,self.num_images,(self.line_num+self.feature_resolution[0]*self.feature_resolution[1]),-1]).permute([0,3,1,2])
+        output = output.reshape([self.batch_size,self.num_images,self.line_num,-1]).permute([0,3,1,2])
 
-        
         pooled_output1 = self.pool_attn1(output)
         pose_preds1 = self.pose_regressor1(pooled_output1.reshape([self.batch_size, -1]))
 
@@ -193,13 +200,13 @@ def build(cfg):
     ctrl1.eval()
     ctrl2.eval()
     print("CTRL_C model load & Freeze")
-    print("Line segemnt masking!!")
-    print("image feature attention")
-    del checkpoint
-    cuti_module1 = build_cuti_module(cfg)
-    cuti_module2 = build_cuti_module(cfg)
+    print("only line feature use")
+    print("end_to_end")
+    # del checkpoint
+    cuti_module1 = None#build_cuti_module(cfg)
+    cuti_module2 = None#build_cuti_module(cfg)
     cuti_encoder1 = build_cuti_encoder(cfg)
-    cuti_encoder2 = build_cuti_encoder(cfg)
+    cuti_encoder2 = None#build_cuti_encoder(cfg)
     PositionEncodingSine = build_pos_sine(cfg)
     decoder_layer = cfg.MODELS.TRANSFORMER.DEC_LAYERS
 

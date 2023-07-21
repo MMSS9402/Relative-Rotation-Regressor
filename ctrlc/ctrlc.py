@@ -52,6 +52,7 @@ class GPTran(nn.Module):
         # query embedding은 nn모듈에서 가져다가 쓴다...
         
         self.query_embed = nn.Embedding(num_queries, hidden_dim)
+        self.line_embed = nn.Embedding(512, hidden_dim)
         line_dim = 3
         if self.use_structure_tensor:
             line_dim = 6
@@ -98,6 +99,7 @@ class GPTran(nn.Module):
             tgt=self.input_line_proj(lines),
             tgt_key_padding_mask=lmask,
             pos_embed=pos[-1],
+            #line_embed = self.line_embed.weight
         )
         
         outputs_vp1 = self.vp1_embed(hs[:,:,0,:]) # [n_dec_layer, bs, 3]
