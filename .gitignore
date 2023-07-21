@@ -9,6 +9,7 @@ test_folder/
 test_file/
 wandb/
 test_data/
+small_data/
 
 
 ## 파일 무시
