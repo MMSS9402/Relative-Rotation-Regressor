@@ -1,38 +1,23 @@
 import numpy as np
-import wandb
 import argparse
 from collections import OrderedDict
 
-import cv2
 import torch
-import torch.optim as optim
 from torch.utils.data import DataLoader
 from test_data.factory_test import dataset_factory
-from config import cfg
 
-import lietorch
 from lietorch import SE3
-from geom.losses import geodesic_loss
 # from src.geom.losses import geodesic_loss
 
 # network
 # from src.model import ViTEss
-from logger import Logger
-from cuti import build
 
 # DDP training
-import torch.multiprocessing as mp
-import torch.distributed as dist
-from torch.nn.parallel import DistributedDataParallel as DDP
 
 from tqdm import tqdm
-import random
-from datetime import datetime
 import os
 
-import torchvision.models as models
-
-from cuti import build
+from src.models.cuti import build
 from config import cfg
 
 def eval_camera(predictions):

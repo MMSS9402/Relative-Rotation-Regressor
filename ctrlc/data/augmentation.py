@@ -4,7 +4,7 @@ import numpy as np
 import numpy.linalg as LA
 import torch.nn.functional as F
 
-from data import transforms as T
+from ctrlc.data import transforms as T
 
 
 class RGBDAugmentor:
