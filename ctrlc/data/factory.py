@@ -1,5 +1,5 @@
 # RGBD-Dataset
-from .matterport import Matterport
+from src.datamodule.matterport_datamodule import Matterport
 
 
 def dataset_factory(dataset_list, **kwargs):

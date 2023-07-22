@@ -1,15 +1,10 @@
-import numpy as np
 import torch
 import torch.nn.functional as F
 from torch import nn
 
-from util.misc import (
+from ctrlc.util import (
     NestedTensor,
     nested_tensor_from_tensor_list,
-    accuracy,
-    get_world_size,
-    interpolate,
-    is_dist_avail_and_initialized,
 )
 
 from .backbone import build_backbone
@@ -165,35 +160,14 @@ class MLP(nn.Module):
         return x
 
 
-def build_ctrl(cfg, train=True):
-    device = torch.device(cfg.DEVICE)
-
+def build_ctrlc(cfg):
     backbone = build_backbone(cfg)
     transformer = build_transformer(cfg)
 
-    ctrl = GPTran(
+    ctrlc = GPTran(
         backbone,
         transformer,
         num_queries=cfg.MODELS.TRANSFORMER.NUM_QUERIES,
-        aux_loss=cfg.LOSS.AUX_LOSS,
         use_structure_tensor=cfg.MODELS.USE_STRUCTURE_TENSOR,
     )
-    weight_dict = dict(cfg.LOSS.WEIGHTS)
-
-    # TODO this is a hack
-    if cfg.LOSS.AUX_LOSS:
-        aux_weight_dict = {}
-        for i in range(cfg.MODELS.TRANSFORMER.DEC_LAYERS - 1):
-            aux_weight_dict.update({k + f"_{i}": v for k, v in weight_dict.items()})
-        weight_dict.update(aux_weight_dict)
-
-    losses = cfg.LOSS.LOSSES
-    # criterion = SetCriterion(
-    #     weight_dict=weight_dict,
-    #     losses=losses,
-    #     line_pos_angle=cfg.LOSS.LINE_POS_ANGLE,
-    #     line_neg_angle=cfg.LOSS.LINE_NEG_ANGLE,
-    # )
-    # criterion.to(device)
-
-    return ctrl  # , criterion
+    return ctrlc

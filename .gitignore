@@ -158,9 +158,9 @@ matterport/
 output/
 wandb/
 checkpoint/
-test_folder/
+scripts/test_folder/
 test_file/
-test_data/
+scripts/test_data/
 small_data/
 
 nohup.out

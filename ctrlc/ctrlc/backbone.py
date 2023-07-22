@@ -2,7 +2,6 @@
 """
 Backbone modules.
 """
-from collections import OrderedDict
 
 import torch
 import torch.nn.functional as F
@@ -11,7 +10,7 @@ from torch import nn
 from torchvision.models._utils import IntermediateLayerGetter
 from typing import Dict, List
 
-from util.misc import NestedTensor, is_main_process
+from ctrlc.util import NestedTensor, is_main_process
 
 from .position_encoding import build_position_encoding
 
@@ -150,7 +149,7 @@ def build_backbone(cfg):
     # 핵심 모듈 정의 1.postional encoding
     position_embedding = build_position_encoding(cfg)
     # 핵심 모듈 정의 2. backbone
-    train_backbone = cfg.SOLVER.LR_BACKBONE > 0
+    train_backbone = False
     return_interm_layers = cfg.MODELS.MASKS
     backbone = Backbone(
         cfg.MODELS.BACKBONE, train_backbone, return_interm_layers, cfg.MODELS.DILATION

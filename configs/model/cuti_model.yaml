@@ -1,0 +1,57 @@
+_target_: src.models.cuti_model.CuTiLitModule
+
+ctrlc:
+  MODELS:
+    BACKBONE: 'resnet50'
+    POSITION_EMBEDDING: 'sine'
+    MASKS: False
+    USE_STRUCTURE_TENSOR: True
+
+    TRANSFORMER:
+      ENC_LAYERS: 6
+      DEC_LAYERS: 6
+      DIM_FEEDFORWARD: 2048
+      HIDDEN_DIM: 128
+      DROPOUT: 0.1
+      NHEADS: 8
+      NUM_QUERIES: 3
+      PRE_NORM: False
+
+ctrlc_checkpoint_path: "/home/kmuvcl/source/oldCuTi/CuTi/checkpoint/checkpoint0099.pth"
+
+position_embedding:
+  _target_: src.models.components.position_encoding.PositionalEncodingSine1D
+  d_model: 512
+  max_len: 4096
+
+transformer:
+  _target_: src.models.components.transformer.LocalFeatureTransformer
+  d_model: 512
+  nhead: 8
+  layer_types: ["self", "cross"]
+  attention: "linear"
+
+max_num_lines: 512
+hidden_dim: 256
+pool_channels: [32, 16]
+pose_regressor_hidden_dim: 512
+pose_size: 7
+
+criterion:
+  _target_: src.models.components.losses.GeodesicLoss
+  weights:
+    translation: 10.0
+    rotation: 10.0
+
+optimizer:
+  _target_: torch.optim.AdamW
+  _partial_: true
+  lr: 1e-4
+  weight_decay: 1e-4
+
+scheduler:
+  _target_: torch.optim.lr_scheduler.ReduceLROnPlateau
+  _partial_: true
+  mode: min
+  factor: 0.1
+  patience: 10

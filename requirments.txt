@@ -23,3 +23,5 @@ rich            # beautiful text formatting in terminal
 pytest          # tests
 # sh            # for running bash commands in some tests (linux/macos only)
 opencv-python   # image save, load, processing
+einops          #
+lietorch        #
