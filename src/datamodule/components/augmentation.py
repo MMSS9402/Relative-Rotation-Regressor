@@ -1,16 +1,13 @@
-import torch
 import torchvision.transforms as transforms
 import numpy as np
 import numpy.linalg as LA
 import torch.nn.functional as F
 
-from ctrlc.data import transforms as T
-
 
 class RGBDAugmentor:
     """perform augmentation on RGB-D video"""
 
-    def __init__(self, reshape_size, datapath=None):
+    def __init__(self, reshape_size: (int, int)):
         self.reshape_size = reshape_size
         p_gray = 0.1
         self.augcolor = transforms.Compose(
@@ -23,14 +20,11 @@ class RGBDAugmentor:
                 transforms.ToTensor(),
             ]
         )
-        # self.linetrans = transforms.Compose(
-        #                             [T.ToTensor(), T.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])]
-                                # )
 
-    def coordinate_yup(self,segs,org_h):
-        H = np.array([0,org_h,0,org_h])
-        segs[:,1] = -segs[:,1]
-        segs[:,3] = -segs[:,3]
+    def coordinate_yup(self, segs, org_h):
+        H = np.array([0, org_h, 0, org_h])
+        segs[:, 1] = -segs[:, 1]
+        segs[:, 3] = -segs[:, 3]
         return(H+segs)
 
     def color_transform(self, images):
@@ -46,7 +40,7 @@ class RGBDAugmentor:
         pp = np.array([pp[0], pp[1], pp[0], pp[1]], dtype=np.float32)
         return rho * (lines - pp)
 
-    def sample_segs_np(self, segs, num_sample, use_prob=True):
+    def sample_segs_np(self, segs, num_sample):
         num_segs = len(segs)
         sampled_segs = np.zeros([num_sample, 4], dtype=np.float32)
         mask = np.zeros([num_sample, 1], dtype=np.float32)
@@ -54,8 +48,6 @@ class RGBDAugmentor:
             sampled_segs[:num_segs] = segs
             mask[:num_segs] = np.ones([num_segs, 1], dtype=np.float32)
         else:
-            # sampled_segs = segs[:num_sample]
-            # mask[:num_segs] = np.ones([num_sample, 1], dtype=np.float32)
             lengths = LA.norm(segs[:, 2:] - segs[:, :2], axis=-1)
             prob = lengths / np.sum(lengths)
             idxs = np.random.choice(segs.shape[0], num_sample, replace=True, p=prob)
@@ -79,37 +71,28 @@ class RGBDAugmentor:
     def __call__(self, images, poses, intrinsics, lines, vps):
         images = self.color_transform(images)
 
-        sizey, sizex = self.reshape_size #480,640
-        #print("reshape_size",self.reshape_size)
+        sizey, sizex = self.reshape_size  # 480, 640
         scalex = sizex / images.shape[-1]
-        #print("sizex",sizex) # 640
-        #print("xxx:",images.shape[-1]) #  640
-        #print("yyy:",images.shape[-2]) # 480
         scaley = sizey / images.shape[-2]
         xidx = np.array([0, 2])
         yidx = np.array([1, 3])
         intrinsics[:, xidx] = scalex * intrinsics[:, xidx]
         intrinsics[:, yidx] = scaley * intrinsics[:, yidx]
 
-        pp = (images.shape[-1] / 2,images.shape[-2] / 2)
-        #print("pp:",pp) # 320,240
+        pp = (images.shape[-1] / 2,images.shape[-2] / 2)  # 320, 240
         rho = 2.0 / np.minimum(images.shape[-2], images.shape[-1])
-        #print("sizey",sizey)
-        lines[0] = self.coordinate_yup(lines[0],sizey)
+
+        lines[0] = self.coordinate_yup(lines[0], sizey)
         lines[0] = self.normalize_segs(lines[0], pp=pp, rho=rho)
         lines[0] = self.sample_segs_np(lines[0], 512)
         lines[0] = self.segs2lines_np(lines[0])
 
-        lines[1] = self.coordinate_yup(lines[1],sizey)
+        lines[1] = self.coordinate_yup(lines[1], sizey)
         lines[1] = self.normalize_segs(lines[1], pp=pp, rho=rho)
         lines[1] = self.sample_segs_np(lines[1], 512)
         lines[1] = self.segs2lines_np(lines[1])
 
-        
-        #print(images.shape)
         images = F.interpolate(images, size=self.reshape_size)
-        #print("images",images.shape) #2,3,480,640
         lines = np.array(lines)
         vps = np.array(vps)
-        #print("augmentation:",lines.shape)
         return images, poses, intrinsics, lines, vps

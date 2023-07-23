@@ -1,21 +1,15 @@
-_target_: src.data.gsv_datamodule.GSVDataModule
+_target_: src.datamodule.matterport_datamodule.MatterportDatamodule
 
-base_path: "/path_to/google_street_view/"
-train_ann_path: "/path_to/gsv_train_20210313.csv"
-val_ann_path: "/path_to/gsv_val_20210313.csv"
-batch_size: 128
-num_workers: 0
-pin_memory: False
+train_ann_filename: "cached_set_moon_train_vp.json"
+val_ann_filename: "cached_set_moon_val_vp.json"
+
 dataset:
-  _target_: src.data.components.gsv_dataset.GSVDataset
-  input_width: 512
-  input_height: 512
-  min_line_length: 10
-  num_input_lines: 512
-  num_input_vert_lines: 256
-  vert_line_angle: 22.5  # degrees
-  return_vert_lines: False
+  _target_: src.datamodule.components.matterport_dataset.MatterportDataset
+  name: "matterport"
+  data_path: "/path_to/google_street_view/"
+  reshape_size: [640, 480]
+  use_mini_dataset: False
 
-
-
-
+batch_size: 6
+num_workers: 8
+pin_memory: False

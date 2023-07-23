@@ -1,52 +1,43 @@
-import numpy as np
-import torch
-import torch.utils.data as data
-import torch.nn.functional as F
-import numpy.linalg as LA
 import csv
-import os
+import numpy as np
+import numpy.linalg as LA
 import cv2
-import math
-import random
-import json
-import pickle
-import os.path as osp
-import time
+import torch
+from torch.utils.data import Dataset
 
 from .augmentation import RGBDAugmentor
 
 
-class RGBDDataset(data.Dataset):
+class RGBDDataset(Dataset):
     def __init__(
         self,
-        name,
-        datapath,
-        reshape_size=[480, 640],
-        subepoch=None,
-        is_training=True,
-        gpu=0,
-        streetlearn_interiornet_type=None,
-        use_mini_dataset=False,
+        name: str,
+        data_path: str,
+        ann_filename: str,
+        reshape_size: (int, int) = (480, 640),
+        use_mini_dataset: bool = False,
     ):
         """Base class for RGBD dataset"""
-        self.root = datapath
         self.name = name
-        self.streetlearn_interiornet_type = streetlearn_interiornet_type
+        self.data_path = data_path
+        self.ann_filename = ann_filename
 
-        self.aug = RGBDAugmentor(reshape_size=reshape_size, datapath=datapath)
+        self.aug = RGBDAugmentor(reshape_size=reshape_size)
 
         self.matterport = False
-        if "matterport" in datapath:
+        if "matterport" in data_path:
             self.matterport = True
-            self.scene_info = self._build_dataset(subepoch == 10)
+            self.scene_info = self._build_dataset()
         elif "StreetLearn" in self.name or "InteriorNet" in self.name:
             self.use_mini_dataset = use_mini_dataset
-            self.scene_info = self._build_dataset(subepoch)
+            self.scene_info = self._build_dataset()
         else:
             print("not currently setup in case have other dataset type!")
             import pdb
-
             pdb.set_trace()
+
+    def _build_dataset(self):
+        raise NotImplementedError
 
     @staticmethod
     def image_read(image_file):
@@ -54,8 +45,7 @@ class RGBDDataset(data.Dataset):
 
     def read_line_file(self,filename, min_line_length=10):
         segs = []  # line segments
-        # csv 파일 열어서 Line 정보 가져오기
-        
+
         with open(str(filename), "r") as csvfile:
             csvreader = csv.reader(csvfile)
             for row in csvreader:
@@ -65,14 +55,12 @@ class RGBDDataset(data.Dataset):
         segs = segs[lengths > min_line_length]
         return segs
 
-
-    def normalize_safe_np(self,v, axis=-1, eps=1e-6):
+    def normalize_safe_np(self, v, axis=-1, eps=1e-6):
         de = LA.norm(v, axis=axis, keepdims=True)
         de = np.maximum(de, eps)
         return v / de
 
-
-    def segs2lines_np(self,segs):
+    def segs2lines_np(self, segs):
         ones = np.ones(len(segs))
         ones = np.expand_dims(ones, axis=-1)
         p1 = np.concatenate([segs[:, :2], ones], axis=-1)
@@ -141,8 +129,6 @@ class RGBDDataset(data.Dataset):
                     poses = torch.from_numpy(poses)
                     intrinsics = torch.from_numpy(intrinsics)
                     lines = []
-                   
-                   
                     for i in range(2):
                         lines.append(self.__class__.read_line_file(lines_list[i], 10))
 
