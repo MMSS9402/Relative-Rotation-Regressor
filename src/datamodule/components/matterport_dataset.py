@@ -10,8 +10,20 @@ class MatterportDataset(RGBDDataset):
     # scale depth to balance rot & trans
     DEPTH_SCALE = 5.0
 
-    def __init__(self, **kwargs):
-        super(MatterportDataset, self).__init__(name="Matterport", **kwargs)
+    def __init__(
+            self,
+            data_path: str,
+            ann_filename: str,
+            reshape_size: (int, int) = (480, 640),
+            use_mini_dataset: bool = False,
+    ):
+        super(MatterportDataset, self).__init__(
+            name="Matterport",
+            data_path=data_path,
+            ann_filename=ann_filename,
+            reshape_size=reshape_size,
+            use_mini_dataset=use_mini_dataset,
+        )
 
     def _build_dataset(self):
         base_pose = np.array([0, 0, 0, 0, 0, 0, 1])

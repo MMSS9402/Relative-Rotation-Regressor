@@ -11,9 +11,9 @@ defaults:
 
 # all parameters below will be merged with parameters from default configurations set above
 # this allows you to overwrite only specified parameters
-task_name: "train_ctrlc_gsv"
+task_name: "train_cuti_matterport"
 
-tags: ["ctrlc", "gsv"]
+tags: ["cuti", "matterport", "train_test"]
 
 seed: 12345
 
@@ -21,11 +21,10 @@ trainer:
   min_epochs: 1
   max_epochs: 2
 
-  accelerator: cpu
-
-model:
-  optimizer:
-    lr: 0.002
+  accelerator: gpu
 
 data:
-  batch_size: 32
+  dataset:
+    use_mini_dataset: true
+    data_path: "D:/workspace/CuTi/small_data/"
+
