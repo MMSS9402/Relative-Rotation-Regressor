@@ -25,16 +25,14 @@ class RGBDDataset(Dataset):
         self.aug = RGBDAugmentor(reshape_size=reshape_size)
 
         self.matterport = False
-        if "matterport" in data_path:
+        if "Matterport" in name:
             self.matterport = True
             self.scene_info = self._build_dataset()
         elif "StreetLearn" in self.name or "InteriorNet" in self.name:
             self.use_mini_dataset = use_mini_dataset
             self.scene_info = self._build_dataset()
         else:
-            print("not currently setup in case have other dataset type!")
-            import pdb
-            pdb.set_trace()
+            raise f"not currently setup in case have other dataset type {name}!"
 
     def _build_dataset(self):
         raise NotImplementedError
@@ -43,10 +41,10 @@ class RGBDDataset(Dataset):
     def image_read(image_file):
         return cv2.imread(image_file)
 
-    def read_line_file(self,filename, min_line_length=10):
+    def read_line_file(self, filename: str, min_line_length=10):
         segs = []  # line segments
 
-        with open(str(filename), "r") as csvfile:
+        with open(filename, "r") as csvfile:
             csvreader = csv.reader(csvfile)
             for row in csvreader:
                 segs.append([float(row[0]), float(row[1]), float(row[2]), float(row[3])])
@@ -79,7 +77,7 @@ class RGBDDataset(Dataset):
 
             images = []
             for i in range(2):
-                images.append(self.__class__.image_read(images_list[i]))
+                images.append(self.image_read(images_list[i]))
 
             poses = np.stack(poses).astype(np.float32)
             intrinsics = np.stack(intrinsics).astype(np.float32)
@@ -94,7 +92,7 @@ class RGBDDataset(Dataset):
             intrinsics = torch.from_numpy(intrinsics)
             lines = []
             for i in range(2):
-                lines.append(self.read_line_file(lines_list[i],10)) 
+                lines.append(self.read_line_file(lines_list[i], 10))
 
             vps = []
             for i in range(2):
@@ -117,7 +115,7 @@ class RGBDDataset(Dataset):
                     images = []
                     
                     for i in range(2):
-                        images.append(self.__class__.image_read(images_list[i]))
+                        images.append(self.image_read(images_list[i]))
                     
                     poses = np.stack(poses).astype(np.float32)
                     intrinsics = np.stack(intrinsics).astype(np.float32)
@@ -130,7 +128,7 @@ class RGBDDataset(Dataset):
                     intrinsics = torch.from_numpy(intrinsics)
                     lines = []
                     for i in range(2):
-                        lines.append(self.__class__.read_line_file(lines_list[i], 10))
+                        lines.append(self.read_line_file(lines_list[i], 10))
 
                     vps = []
                     for i in range(2):

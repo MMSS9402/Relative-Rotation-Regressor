@@ -4,8 +4,6 @@
 # python train.py experiment=example
 
 defaults:
-  - override /data: matterport_datamodule.yaml
-  - override /model: cuti_model.yaml
   - override /callbacks: default.yaml
   - override /trainer: default.yaml
 
@@ -21,10 +19,9 @@ trainer:
   min_epochs: 1
   max_epochs: 2
 
-  accelerator: gpu
+  accelerator: cpu
 
 data:
   dataset:
     use_mini_dataset: true
-    data_path: "D:/workspace/CuTi/small_data/"
-
+    data_path: "D:/workspace/CuTi/small_data"

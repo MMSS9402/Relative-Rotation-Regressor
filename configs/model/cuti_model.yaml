@@ -3,8 +3,10 @@ _target_: src.models.cuti_model.CuTiLitModule
 ctrlc:
   MODELS:
     BACKBONE: 'resnet50'
+    DILATION: False
     POSITION_EMBEDDING: 'sine'
     MASKS: False
+    FROZEN_WEIGHT: None
     USE_STRUCTURE_TENSOR: True
 
     TRANSFORMER:
@@ -19,8 +21,8 @@ ctrlc:
 
 ctrlc_checkpoint_path: "/home/kmuvcl/source/oldCuTi/CuTi/checkpoint/checkpoint0099.pth"
 
-position_embedding:
-  _target_: src.models.components.position_encoding.PositionalEncodingSine1D
+pos_encoder:
+  _target_: src.models.components.position_encoding.PositionEncodingSine1D
   d_model: 512
   max_len: 4096
 
@@ -31,7 +33,7 @@ transformer:
   layer_types: ["self", "cross"]
   attention: "linear"
 
-max_num_lines: 512
+max_num_line: 512
 hidden_dim: 256
 pool_channels: [32, 16]
 pose_regressor_hidden_dim: 512

@@ -1,13 +1,13 @@
+from typing import Callable
 import torch
-import torch.nn as nn
 
 
-class GeodesicLoss(nn.Module):
+class GeodesicLoss(Callable):
     def __init__(self, weights):
         self.weights_tr = weights.translation
         self.weights_rot = weights.rotation
 
-    def forward(self, Ps, Gs):
+    def __call__(self, Ps, Gs):
         ii, jj = torch.tensor([0, 1]), torch.tensor([1, 0])
 
         dP = Ps[:, jj] * Ps[:, ii].inv()

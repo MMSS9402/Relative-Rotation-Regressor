@@ -79,7 +79,7 @@ class RGBDAugmentor:
         intrinsics[:, xidx] = scalex * intrinsics[:, xidx]
         intrinsics[:, yidx] = scaley * intrinsics[:, yidx]
 
-        pp = (images.shape[-1] / 2,images.shape[-2] / 2)  # 320, 240
+        pp = (images.shape[-1] / 2, images.shape[-2] / 2)  # 320, 240
         rho = 2.0 / np.minimum(images.shape[-2], images.shape[-1])
 
         lines[0] = self.coordinate_yup(lines[0], sizey)
@@ -92,7 +92,7 @@ class RGBDAugmentor:
         lines[1] = self.sample_segs_np(lines[1], 512)
         lines[1] = self.segs2lines_np(lines[1])
 
-        images = F.interpolate(images, size=self.reshape_size)
+        images = F.interpolate(images, size=(sizey, sizex))
         lines = np.array(lines)
         vps = np.array(vps)
         return images, poses, intrinsics, lines, vps

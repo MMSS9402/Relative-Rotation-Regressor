@@ -7,13 +7,14 @@ from lightning import LightningModule
 import pyrootutils
 import torch
 import torch.nn as nn
-from lietorch import SE3
+# from lietorch import SE3
+import lietorch
 from omegaconf import DictConfig
 from einops import rearrange
 
 root = pyrootutils.find_root(__file__)
 sys.path.insert(0, str(root / "ctrlc"))
-from ctrlc.ctrlc.ctrlc import GPTran, build_ctrlc
+from ctrlc.model.ctrlc_model import GPTran, build_ctrlc
 
 
 class CuTiLitModule(LightningModule):
@@ -29,8 +30,8 @@ class CuTiLitModule(LightningModule):
             pose_regressor_hidden_dim: int,
             pose_size: int,
             criterion: DictConfig,
-            optimizer: DictConfig,
-            scheduler: DictConfig,
+            optimizer: torch.optim.Optimizer,
+            scheduler: torch.optim.lr_scheduler,
     ):
         super().__init__()
 
@@ -38,25 +39,28 @@ class CuTiLitModule(LightningModule):
         # also ensures init params will be stored in ckpt
         self.save_hyperparameters(logger=False)
 
-        assert os.path.exists(ctrlc_checkpoint_path), "ctrlc checkpoint must be exists!"
-        ctrlc_checkpoint = torch.load(ctrlc_checkpoint_path)
+        # assert os.path.exists(ctrlc_checkpoint_path), "ctrlc checkpoint must be exists!"
+        # ctrlc_checkpoint = torch.load(ctrlc_checkpoint_path)
 
         self.ctrlc: GPTran = build_ctrlc(ctrlc)
-        self.ctrlc.load_state_dict(ctrlc_checkpoint["model"], strict=False)
+        # self.ctrlc.load_state_dict(ctrlc_checkpoint["model"], strict=False)
         self.ctrlc.requires_grad_(False)
         self.ctrlc.eval()
 
-        self.pos_encoder = hydra.utils.instantiate(pos_encoder)
+        # self.pos_encoder = hydra.utils.instantiate(pos_encoder)
+        self.pos_encoder = pos_encoder
 
         self.feature_embed = nn.Linear(6, 1)
 
-        self.image_idx_embedding = nn.Embedding(self.num_image, self.hidden_dim)
-        self.line_idx_embedding = nn.Embedding(self.num_line, self.hidden_dim)
-
         self.num_image = 2
         self.max_num_line = max_num_line
+        self.hidden_dim = hidden_dim
 
-        self.transformer_block = hydra.utils.instantiate(transformer)
+        self.image_idx_embedding = nn.Embedding(self.num_image, self.hidden_dim)
+        self.line_idx_embedding = nn.Embedding(self.max_num_line, self.hidden_dim)
+
+        # self.transformer_block = hydra.utils.instantiate(transformer)
+        self.transformer_block = transformer
 
         self.pool_transformer_output = nn.Sequential(
             nn.Conv2d(hidden_dim, pool_channels[0], kernel_size=1, bias=False),
@@ -77,7 +81,8 @@ class CuTiLitModule(LightningModule):
             nn.Unflatten(1, (self.num_image, pose_size)),
         )
 
-        self.criterion = hydra.utils.instantiate(criterion)
+        # self.criterion = hydra.utils.instantiate(criterion)
+        self.criterion = criterion
 
     def forward(self, images: torch.Tensor, lines: torch.Tensor):
         # [dec_layer, bs, line_num, hidden_dim]
@@ -119,15 +124,15 @@ class CuTiLitModule(LightningModule):
         return self.normalize_preds(pose_preds)
 
     def normalize_preds(self, pose_preds):
-        pred_out_Gs = SE3(pose_preds)
-        Gs = SE3.IdentityLike(pred_out_Gs)
+        pred_out_Gs = lietorch.SE3(pose_preds)
+        Gs = lietorch.SE3.IdentityLike(pred_out_Gs)
 
         normalized = pred_out_Gs.data[:, :, 3:].norm(dim=-1).unsqueeze(2)
         eps = torch.ones_like(normalized) * .01
-        pred_out_Gs_new = SE3(torch.clone(pred_out_Gs.data))
+        pred_out_Gs_new = lietorch.SE3(torch.clone(pred_out_Gs.data))
         pred_out_Gs_new.data[:, :, 3:] = pred_out_Gs.data[:, :, 3:] / torch.max(normalized, eps)
 
-        these_out_Gs = SE3(torch.cat([Gs[:, :1].data, pred_out_Gs_new.data[:, 1:]], dim=1))
+        these_out_Gs = lietorch.SE3(torch.cat([Gs[:, :1].data, pred_out_Gs_new.data[:, 1:]], dim=1))
         out_Gs = [these_out_Gs]
         return out_Gs
 
@@ -140,7 +145,7 @@ class CuTiLitModule(LightningModule):
 
     def shared_step(self, batch: Any):
         images, poses, intrinsics, lines, vps = batch
-        Ps = SE3(poses)
+        Ps = lietorch.modelsSE3(poses)
 
         pose_preds = self.forward(images, lines)
 

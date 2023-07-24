@@ -31,21 +31,21 @@ class MatterportDataset(RGBDDataset):
         with open(os.path.join(self.data_path, "mp3d_planercnn_json", self.ann_filename)) as file:
             split = json.load(file)
 
-        images = []
-        lines = []
-        vps = []
-        poses = []
-        intrinsics = []
+        images_list = []
+        lines_list = []
+        vps_list = []
+        poses_list = []
+        intrinsics_list = []
 
-        for data in split["data"]:
+        basepath = "/Pool1/users/jinlinyi/dataset/mp3d_rpnet_v4_sep20"
 
+        for data in split["data"].values():
+            vps = []
+            images = []
+            lines = []
             for img_idx in ["0", "1"]:
-                img_name = os.path.join(self.data_path,
-                                        "/".join(data[img_idx]["file_name"].split("/")[6:]))
-
-                line_name = img_name.split("/")
-                line_name[9] = img_name.split("/")[9].split(".")[0] + "_line.csv"
-                line_name = "/".join(line_name)
+                img_path = data[img_idx]["file_name"].replace(basepath, self.data_path)
+                line_path = img_path.replace(".png", "_line.csv",)
 
                 vp1 = data[img_idx]['vp1']
                 vp2 = data[img_idx]['vp2']
@@ -54,8 +54,8 @@ class MatterportDataset(RGBDDataset):
                 gt_vps = np.array([vp1, vp2, vp3])
                 vps.append(gt_vps)
 
-                images.append(img_name)
-                lines.append(line_name)
+                images.append(img_path)
+                lines.append(line_path)
 
             rel_pose = np.array(data["rel_pose"]["position"] + data["rel_pose"]["rotation"])
 
@@ -74,11 +74,17 @@ class MatterportDataset(RGBDDataset):
                 [[517.97, 517.97, 320, 240], [517.97, 517.97, 320, 240]]
             )  # 480 x 640 imgs
 
+            images_list.append(images)
+            lines_list.append(lines)
+            vps_list.append(vps)
+            poses_list.append(poses)
+            intrinsics_list.append(intrinsics)
+
         scene_info = {
-            "images": images,
-            "poses": poses,
-            "intrinsics": intrinsics,
-            "lines": lines,
-            'vps': vps,
+            "images": images_list,
+            "poses": poses_list,
+            "intrinsics": intrinsics_list,
+            "lines": lines_list,
+            'vps': vps_list,
         }
         return scene_info
