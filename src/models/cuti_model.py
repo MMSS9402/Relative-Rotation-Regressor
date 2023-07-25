@@ -11,10 +11,6 @@ from lietorch import SE3
 from omegaconf import DictConfig
 from einops import rearrange
 
-from src.models.components.transformer import LocalFeatureTransformer
-from src.models.components.position_encoding import PositionEncodingSine1D
-from src.models.components.losses import GeodesicLoss
-
 root = pyrootutils.find_root(__file__)
 sys.path.insert(0, str(root / "ctrlc"))
 from ctrlc.model.ctrlc_model import GPTran, build_ctrlc
@@ -42,11 +38,11 @@ class CuTiLitModule(LightningModule):
         # also ensures init params will be stored in ckpt
         self.save_hyperparameters()
 
-        # assert os.path.exists(ctrlc_checkpoint_path), "ctrlc checkpoint must be exists!"
-        # ctrlc_checkpoint = torch.load(ctrlc_checkpoint_path)
+        assert os.path.exists(ctrlc_checkpoint_path), "ctrlc checkpoint must be exists!"
+        ctrlc_checkpoint = torch.load(ctrlc_checkpoint_path)
 
         self.ctrlc: GPTran = build_ctrlc(ctrlc)
-        # self.ctrlc.load_state_dict(ctrlc_checkpoint["model"], strict=False)
+        self.ctrlc.load_state_dict(ctrlc_checkpoint["model"], strict=False)
         self.ctrlc.requires_grad_(False)
         self.ctrlc.eval()
 
