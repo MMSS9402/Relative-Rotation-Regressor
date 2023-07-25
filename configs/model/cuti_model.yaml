@@ -34,7 +34,7 @@ transformer:
   attention: "linear"
 
 max_num_line: 512
-hidden_dim: 256
+hidden_dim: 512
 pool_channels: [32, 16]
 pose_regressor_hidden_dim: 512
 pose_size: 7
@@ -47,13 +47,11 @@ criterion:
 
 optimizer:
   _target_: torch.optim.AdamW
-  _partial_: true
   lr: 1e-4
   weight_decay: 1e-4
 
 scheduler:
   _target_: torch.optim.lr_scheduler.ReduceLROnPlateau
-  _partial_: true
   mode: min
   factor: 0.1
   patience: 10

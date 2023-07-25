@@ -7,6 +7,6 @@ num_workers: 8
 pin_memory: False
 dataset:
   _target_: src.datamodule.components.matterport_dataset.MatterportDataset
-  data_path: "/path_to/google_street_view/"
+  data_path: "/data/matterport_dataset/"
   reshape_size: [640, 480]
   use_mini_dataset: False

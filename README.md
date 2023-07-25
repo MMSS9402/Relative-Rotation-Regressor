@@ -2,10 +2,10 @@
 
 ## train script
 ```shell
-python src/train.py 
+python run.py 
 ```
 
 ## train test script
 ```shell
-python src/train.py experiment=cuti_run_test.yaml
+python run.py experiment=cuti_run_test.yaml
 ```

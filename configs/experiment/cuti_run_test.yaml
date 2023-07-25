@@ -4,7 +4,7 @@
 # python train.py experiment=example
 
 defaults:
-  - override /callbacks: default.yaml
+  - override /callbacks: none.yaml
   - override /trainer: default.yaml
 
 # all parameters below will be merged with parameters from default configurations set above
@@ -19,9 +19,9 @@ trainer:
   min_epochs: 1
   max_epochs: 2
 
-  accelerator: cpu
+  gpus: 1
 
-data:
+datamodule:
   dataset:
     use_mini_dataset: true
-    data_path: "D:/workspace/CuTi/small_data"
+    data_path: "/data/CuTi/small_data"

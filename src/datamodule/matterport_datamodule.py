@@ -2,7 +2,7 @@ from typing import Any, Dict, Optional
 
 import hydra
 from omegaconf import DictConfig
-from lightning import LightningDataModule
+from pytorch_lightning import LightningDataModule
 from torch.utils.data import DataLoader, Dataset
 
 
@@ -17,10 +17,12 @@ class MatterportDatamodule(LightningDataModule):
             pin_memory: bool = False,
     ):
         super().__init__()
-
-        # this line allows to access init params with 'self.hparams' attribute
-        # also ensures init params will be stored in ckpt
-        self.save_hyperparameters(logger=False)
+        self.train_ann_filename = train_ann_filename
+        self.val_ann_filename = val_ann_filename
+        self.dataset = dataset
+        self.batch_size = batch_size
+        self.num_workers = num_workers
+        self.pin_memory = pin_memory
 
         self.train_dataset: Optional[Dataset] = None
         self.val_dataset: Optional[Dataset] = None
@@ -33,29 +35,31 @@ class MatterportDatamodule(LightningDataModule):
         """
         if stage == "fit":
             self.train_dataset = hydra.utils.instantiate(
-                self.hparams.dataset,
-                ann_filename=self.hparams.train_ann_filename,
+                self.dataset,
+                ann_filename=self.train_ann_filename,
             )
             self.val_dataset = hydra.utils.instantiate(
-                self.hparams.dataset,
-                ann_filename=self.hparams.val_ann_filename,
+                self.dataset,
+                ann_filename=self.val_ann_filename,
             )
+        else:
+            raise f"[{stage}] is not support yet!"
 
     def train_dataloader(self):
         return DataLoader(
             dataset=self.train_dataset,
-            batch_size=self.hparams.batch_size,
-            num_workers=self.hparams.num_workers,
-            pin_memory=self.hparams.pin_memory,
+            batch_size=self.batch_size,
+            num_workers=self.num_workers,
+            pin_memory=self.pin_memory,
             shuffle=True,
         )
 
     def val_dataloader(self):
         return DataLoader(
             dataset=self.val_dataset,
-            batch_size=self.hparams.batch_size,
-            num_workers=self.hparams.num_workers,
-            pin_memory=self.hparams.pin_memory,
+            batch_size=self.batch_size,
+            num_workers=self.num_workers,
+            pin_memory=self.pin_memory,
             shuffle=False,
         )
 
@@ -63,11 +67,3 @@ class MatterportDatamodule(LightningDataModule):
         """Clean up after fit or test."""
         self.train_dataset = None
         self.val_dataset = None
-
-    def state_dict(self):
-        """Extra things to save to checkpoint."""
-        return {}
-
-    def load_state_dict(self, state_dict: Dict[str, Any]):
-        """Things to do when loading checkpoint."""
-        pass
