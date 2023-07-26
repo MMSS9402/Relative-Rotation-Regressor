@@ -1,0 +1,27 @@
+# @package _global_
+
+# to execute this experiment run:
+# python train.py experiment=example
+
+defaults:
+  - override /callbacks: none.yaml
+  - override /trainer: default.yaml
+
+# all parameters below will be merged with parameters from default configurations set above
+# this allows you to overwrite only specified parameters
+task_name: "train_cuti_matterport"
+
+tags: ["cuti", "matterport", "train_test"]
+
+seed: 12345
+
+trainer:
+  min_epochs: 1
+  max_epochs: 2
+
+  gpus: 1
+
+datamodule:
+  dataset:
+    use_mini_dataset: true
+    data_path: "/data/CuTi/small_data"
