@@ -2,7 +2,7 @@ _target_: src.datamodule.matterport_datamodule.MatterportDatamodule
 
 train_ann_filename: "cached_set_moon_train_vp.json"
 val_ann_filename: "cached_set_moon_val_vp.json"
-batch_size: 2
+batch_size: 4
 num_workers: 8
 pin_memory: False
 dataset:

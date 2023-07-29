@@ -24,4 +24,4 @@ trainer:
 datamodule:
   dataset:
     use_mini_dataset: true
-    data_path: "/data/CuTi/small_data"
+    data_path: "/data/chop-private_164/CuTi/small_data"

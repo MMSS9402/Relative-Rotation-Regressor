@@ -38,11 +38,11 @@ class CuTiLitModule(LightningModule):
         # also ensures init params will be stored in ckpt
         self.save_hyperparameters()
 
-        assert os.path.exists(ctrlc_checkpoint_path), "ctrlc checkpoint must be exists!"
-        ctrlc_checkpoint = torch.load(ctrlc_checkpoint_path)
+        # assert os.path.exists(ctrlc_checkpoint_path), "ctrlc checkpoint must be exists!"
+        # ctrlc_checkpoint = torch.load(ctrlc_checkpoint_path)
 
         self.ctrlc: GPTran = build_ctrlc(ctrlc)
-        self.ctrlc.load_state_dict(ctrlc_checkpoint["model"], strict=False)
+        # self.ctrlc.load_state_dict(ctrlc_checkpoint["model"], strict=False)
         self.ctrlc.requires_grad_(False)
         self.ctrlc.eval()
 
@@ -86,21 +86,21 @@ class CuTiLitModule(LightningModule):
     def forward(self, images: torch.Tensor, lines: torch.Tensor):
         # [dec_layer, bs, line_num, hidden_dim]
         hs0, memory0, pred0_vp0, pred0_vp1, pred0_vp2 = self.ctrlc(
-            images[0],
-            lines[0]
+            images[:, 0],
+            lines[:, 0]
         )
         hs1, memory1, pred1_vp0, pred1_vp1, pred1_vp2 = self.ctrlc(
-            images[1],
-            lines[1]
+            images[:, 1],
+            lines[:, 1]
         )
-
-        batch_size = hs0.shape[1]
 
         # hs0 = rearrange(hs0, "d b n c -> b n c d").contiguous()
         # hs1 = rearrange(hs1, "d b n c -> b n c d").contiguous()
         # using last decoder layer's feature
         hs0 = hs0[-1]  # [b x n x c]
         hs1 = hs1[-1]
+
+        batch_size = hs0.shape[0]
 
         hs0 = self.feature_embed(hs0)
         hs1 = self.feature_embed(hs1)
@@ -117,7 +117,7 @@ class CuTiLitModule(LightningModule):
         feat0, feat1 = self.transformer_block(feat0, feat1)
 
         feat = torch.cat([feat0.unsqueeze(0), feat0.unsqueeze(0)], dim=0)
-        feat = feat.reshape([batch_size, self.num_image, self.max_num_line, -1]).permute([0, 3, 1, 2])
+        feat = feat.reshape([batch_size, self.num_image, self.max_num_line, -1])
         feat = rearrange(feat, "b i l c -> b c i l").contiguous()
 
         pooled_feat = self.pool_transformer_output(feat)
