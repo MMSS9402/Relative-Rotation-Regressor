@@ -1,7 +1,7 @@
 from typing import Any, List
 import sys
 import os
-
+import numpy as np
 import hydra.utils
 from pytorch_lightning import LightningModule
 import pyrootutils
@@ -29,6 +29,7 @@ class CuTiLitModule(LightningModule):
             pose_regressor_hidden_dim: int,
             pose_size: int,
             criterion: DictConfig,
+            test_metric: DictConfig,
             optimizer: DictConfig,
             scheduler: DictConfig,
     ):
@@ -39,20 +40,21 @@ class CuTiLitModule(LightningModule):
         self.save_hyperparameters()
 
         # assert os.path.exists(ctrlc_checkpoint_path), "ctrlc checkpoint must be exists!"
-        # ctrlc_checkpoint = torch.load(ctrlc_checkpoint_path)
-
+        ctrlc_checkpoint = torch.load(ctrlc_checkpoint_path)
+        self.predictions = {'camera': {'preds': {'tran': [], 'rot': []}, 'gts': {'tran': [], 'rot': []}}}
         self.ctrlc: GPTran = build_ctrlc(ctrlc)
-        # self.ctrlc.load_state_dict(ctrlc_checkpoint["model"], strict=False)
+        self.ctrlc.load_state_dict(ctrlc_checkpoint["model"], strict=False)
         self.ctrlc.requires_grad_(False)
         self.ctrlc.eval()
 
         self.num_image = 2
+        self.num_vp = 3
         self.max_num_line = max_num_line
         self.hidden_dim = hidden_dim
 
         self.pos_encoder = hydra.utils.instantiate(pos_encoder)
 
-        self.feature_embed = nn.Linear(128, self.hidden_dim)
+        self.feature_embed = nn.Linear(256, self.hidden_dim) # 128
 
         self.image_idx_embedding = nn.Embedding(self.num_image, self.hidden_dim)
         self.line_idx_embedding = nn.Embedding(self.max_num_line, self.hidden_dim)
@@ -67,7 +69,7 @@ class CuTiLitModule(LightningModule):
             nn.BatchNorm2d(pool_channels[1])
         )
 
-        pose_regressor_input_dim = int(self.num_image * pool_channels[1] * self.max_num_line)
+        pose_regressor_input_dim = int(self.num_image * pool_channels[1] * (self.max_num_line))
 
         self.pose_regressor = nn.Sequential(
             nn.Linear(pose_regressor_input_dim, pose_regressor_hidden_dim),
@@ -79,6 +81,7 @@ class CuTiLitModule(LightningModule):
         )
 
         self.criterion = hydra.utils.instantiate(criterion)
+        self.test_camera = hydra.utils.instantiate(test_metric)
 
         self.optimizer = optimizer
         self.scheduler = scheduler
@@ -101,6 +104,7 @@ class CuTiLitModule(LightningModule):
         hs1 = hs1[-1]
 
         batch_size = hs0.shape[0]
+        #print(batch_size)
 
         hs0 = self.feature_embed(hs0)
         hs1 = self.feature_embed(hs1)
@@ -137,9 +141,40 @@ class CuTiLitModule(LightningModule):
         these_out_Gs = SE3(torch.cat([Gs[:, :1].data, pred_out_Gs_new.data[:, 1:]], dim=1))
         out_Gs = [these_out_Gs]
         return out_Gs
+    def eval_camera(self,predictions):
+        acc_threshold = {
+        "tran": 1.0,
+        "rot": 30,
+        }
+        pred_tran = np.vstack(predictions["camera"]["preds"]["tran"])
+        pred_rot = np.vstack(predictions["camera"]["preds"]["rot"])
+
+        gt_tran = np.vstack(predictions["camera"]["gts"]["tran"])
+        gt_rot = np.vstack(predictions["camera"]["gts"]["rot"])
+
+        top1_error = {
+            "tran": np.linalg.norm(gt_tran - pred_tran, axis=1),
+            "rot": 2 * np.arccos(np.clip(np.abs(np.sum(np.multiply(pred_rot, gt_rot), axis=1)), -1.0, 1.0)) * 180 / np.pi,
+        }
+        top1_accuracy = {
+            "tran": (top1_error["tran"] < acc_threshold["tran"]).sum()
+            / len(top1_error["tran"]),
+            "rot": (top1_error["rot"] < acc_threshold["rot"]).sum()
+            / len(top1_error["rot"]),
+        }
+        camera_metrics = {
+            f"top1 T err < {acc_threshold['tran']}": top1_accuracy["tran"] * 100,
+            f"top1 R err < {acc_threshold['rot']}": top1_accuracy["rot"] * 100,
+            f"T mean err": np.mean(top1_error["tran"]),
+            f"R mean err": np.mean(top1_error["rot"]),
+            f"T median err": np.median(top1_error["tran"]),
+            f"R median err": np.median(top1_error["rot"]),
+        }  
+        return camera_metrics
 
     def on_train_start(self):
         pass
+    
 
     def shared_step(self, batch: Any):
         images, poses, intrinsics, lines, vps = batch
@@ -175,10 +210,22 @@ class CuTiLitModule(LightningModule):
         pass
 
     def test_step(self, batch: Any, batch_idx: int):
-        pass
+        
+        images, poses, intrinsics, lines, vps = batch
+        pose_preds = self.forward(images, lines)
+
+        
+        predictions = self.test_camera(poses, pose_preds,self.predictions)
+
+        return predictions
 
     def test_epoch_end(self, outputs: List[Any]):
-        pass
+        predictions = outputs[0]
+        #print(predictions)
+        camera_metrics = self.eval_camera(predictions)
+        for k in camera_metrics:
+            print(k, camera_metrics[k])
+
 
     def configure_optimizers(self):
         """Choose what optimizers and learning-rate schedulers to use in your optimization.

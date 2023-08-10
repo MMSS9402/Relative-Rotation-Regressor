@@ -1,4 +1,4 @@
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional, Union
 
 import hydra
 from omegaconf import DictConfig
@@ -11,6 +11,7 @@ class MatterportDatamodule(LightningDataModule):
             self,
             train_ann_filename: str,
             val_ann_filename: str,
+            test_ann_filename: str,
             dataset: DictConfig,
             batch_size: int,
             num_workers: int = 0,
@@ -19,6 +20,7 @@ class MatterportDatamodule(LightningDataModule):
         super().__init__()
         self.train_ann_filename = train_ann_filename
         self.val_ann_filename = val_ann_filename
+        self.test_ann_filename = test_ann_filename
         self.dataset = dataset
         self.batch_size = batch_size
         self.num_workers = num_workers
@@ -42,6 +44,11 @@ class MatterportDatamodule(LightningDataModule):
                 self.dataset,
                 ann_filename=self.val_ann_filename,
             )
+        elif stage == "test":
+            self.test_dataset = hydra.utils.instantiate(
+                self.dataset,
+                ann_filename= self.test_ann_filename
+            )
         else:
             raise f"[{stage}] is not support yet!"
 
@@ -61,6 +68,14 @@ class MatterportDatamodule(LightningDataModule):
             num_workers=self.num_workers,
             pin_memory=self.pin_memory,
             shuffle=False,
+        )
+    def test_dataloader(self):
+        return DataLoader(
+            dataset=self.test_dataset,
+            batch_size=self.batch_size,
+            num_workers=self.num_workers,
+            pin_memory=self.pin_memory,
+            shuffle=False
         )
 
     def teardown(self, stage: Optional[str] = None):

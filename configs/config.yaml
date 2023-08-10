@@ -7,7 +7,7 @@ defaults:
   - model: cuti_model.yaml
   - datamodule: matterport_datamodule.yaml
   - callbacks: default.yaml
-  - logger: null # set logger here or use command line (e.g. `python run.py logger=wandb`)
+  - logger: wandb # set logger here or use command line (e.g. `python run.py logger=wandb`)
 
   - mode: default.yaml
 
@@ -35,8 +35,10 @@ ignore_warnings: True
 
 # check performance on test set, using the best model achieved during training
 # lightning chooses best model based on metric specified in checkpoint callback
-test_after_training: False
+test_after_training: True
 
+checkpoint_filepath : ${callbacks.model_checkpoint.dirpath}
+checkpoint_filename : ${callbacks.model_checkpoint.filename}
 # seed for random number generators in pytorch, numpy and python.random
 seed: 0
 

@@ -162,6 +162,8 @@ scripts/test_folder/
 test_file/
 scripts/test_data/
 small_data/
+logs/
+test_folder/
 
 nohup.out
 LSD.py

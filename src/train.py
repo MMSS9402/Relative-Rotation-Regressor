@@ -1,5 +1,7 @@
 from typing import List, Optional
 
+import torch
+
 import hydra
 from omegaconf import DictConfig
 from pytorch_lightning import (
@@ -12,6 +14,9 @@ from pytorch_lightning import (
 from pytorch_lightning.loggers import LightningLoggerBase
 
 from src.utils import utils
+
+from pytorch_lightning.loggers import WandbLogger
+from pytorch_lightning import Trainer
 
 log = utils.get_logger(__name__)
 
@@ -55,6 +60,7 @@ def train(config: DictConfig) -> Optional[float]:
                 log.info(f"Instantiating logger <{lg_conf._target_}>")
                 logger.append(hydra.utils.instantiate(lg_conf))
 
+
     # Init lightning trainer
     log.info(f"Instantiating trainer <{config.trainer._target_}>")
     trainer: Trainer = hydra.utils.instantiate(
@@ -72,14 +78,21 @@ def train(config: DictConfig) -> Optional[float]:
         logger=logger,
     )
 
+    
+
     # Train the model
-    log.info("Starting training!")
-    trainer.fit(model=model, datamodule=datamodule)
+    # log.info("Starting training!")
+    # trainer.fit(model=model, datamodule=datamodule)
 
     # Evaluate model on test set, using the best model achieved during training
     if config.get("test_after_training") and not config.trainer.get("fast_dev_run"):
         log.info("Starting testing!")
-        trainer.test()
+        # check_point = torch.load(config.get('checkpoint_filepath')+config.get("checkpoint_filename"))
+        check_point = torch.load("")
+        model.load_state_dict(check_point['state_dict'],strict=False)
+        print(check_point['state_dict'])
+        print("load_model")
+        trainer.test(model=model,datamodule=datamodule)
 
     # Make sure everything closed properly
     log.info("Finalizing!")
