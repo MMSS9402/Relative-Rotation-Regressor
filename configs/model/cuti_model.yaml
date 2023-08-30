@@ -30,7 +30,7 @@ transformer:
   _target_: src.models.components.transformer.LocalFeatureTransformer
   d_model: 256 #512
   nhead: 8
-  layer_types: ["self", "cross","self","cross","self","cross"]
+  layer_types: ["self", "cross"]
   attention: "linear"
 
 max_num_line: 512
@@ -45,17 +45,29 @@ criterion:
     translation: 10.0
     rotation: 10.0
 
+vp_criterion:
+  _target_: src.models.components.vp_loss.VpLoss
+
+Rel_criterion:
+  _target_: src.models.components.losses_non_geodesic.RelPoseLoss
+  weights:
+    translation: 10.0
+    rotation: 10.0
+
 test_metric:
   _target_: src.models.components.testfunction.Testcamera
   Reference:
     translation: 1.0
     rotation: 30
+
+matcher:
+  _target_: src.models.components.matcher.HungarianMatcher
   
 
 optimizer:
   _target_: torch.optim.AdamW
-  lr: 1e-4
-  weight_decay: 1e-4
+  lr: 1e-5
+  weight_decay: 1e-5
 
 scheduler:
   _target_: torch.optim.lr_scheduler.ReduceLROnPlateau

@@ -97,11 +97,12 @@ class RGBDDataset(Dataset):
             vps = []
             for i in range(2):
                 vps.append(np.array(vp_list[i]))
-            images, poses, intrinsics, lines, vps = self.aug(
+            
+            images, poses, intrinsics, lines, vps, endpoint = self.aug(
                 images, poses, intrinsics, lines, vps
             )
 
-            return images, poses, intrinsics, lines, vps
+            return images, poses, intrinsics, lines, vps, endpoint
         else:
             local_index = index
             # in case index fails
@@ -134,11 +135,11 @@ class RGBDDataset(Dataset):
                     for i in range(2):
                         vps.append(np.array(vp_list[i]))
 
-                    images, poses, intrinsics, lines, vps = self.aug(
+                    images, poses, intrinsics, lines, vps, endpoint = self.aug(
                         images, poses, intrinsics, lines,vps
                     )
 
-                    return images, poses, intrinsics, lines,vps
+                    return images, poses, intrinsics, lines,vps, endpoint
                 except:
                     local_index += 1
                     continue

@@ -9,5 +9,5 @@ pin_memory: False
 dataset:
   _target_: src.datamodule.components.matterport_dataset.MatterportDataset
   data_path: "/home/kmuvcl/source/oldCuTi/CuTi/matterport"
-  reshape_size: [640, 480]
+  reshape_size: [480, 640]
   use_mini_dataset: False

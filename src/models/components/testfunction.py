@@ -33,6 +33,7 @@ class Testcamera(Callable):
         
         # preds = pose_preds[0][0][1].data.cpu().numpy()
         preds = pose_preds[0].data.cpu().numpy()
+        print("preds",pose_preds[0].data)
         #print(preds.shape)
         preds = preds[:,1,:]
         #print(preds.shape)

@@ -65,6 +65,7 @@ def train(config: DictConfig) -> Optional[float]:
     log.info(f"Instantiating trainer <{config.trainer._target_}>")
     trainer: Trainer = hydra.utils.instantiate(
         config.trainer, callbacks=callbacks, logger=logger, _convert_="partial"
+
     )
 
     # Send some parameters from config to all lightning loggers
@@ -81,18 +82,23 @@ def train(config: DictConfig) -> Optional[float]:
     
 
     # Train the model
-    # log.info("Starting training!")
-    # trainer.fit(model=model, datamodule=datamodule)
+    log.info("Starting training!")
+    trainer.fit(model=model, datamodule=datamodule)
 
     # Evaluate model on test set, using the best model achieved during training
     if config.get("test_after_training") and not config.trainer.get("fast_dev_run"):
         log.info("Starting testing!")
         # check_point = torch.load(config.get('checkpoint_filepath')+config.get("checkpoint_filename"))
-        check_point = torch.load("")
-        model.load_state_dict(check_point['state_dict'],strict=False)
-        print(check_point['state_dict'])
-        print("load_model")
-        trainer.test(model=model,datamodule=datamodule)
+        
+        
+        # check_point = torch.load("/home/kmuvcl/source/oldCuTi/CuTi/logs/runs/2023-08-13/22-19-33/checkpoints/last.ckpt")
+        # model.load_state_dict(check_point['state_dict'])
+        
+        
+        #model = LightningModule.load_from_checkpoint("/home/kmuvcl/source/oldCuTi/CuTi/logs/runs/2023-08-16/17-50-28/checkpoints/epoch_000.ckpt",strict=False)
+        #print(check_point['state_dict'])
+        #print("load_model")
+        trainer.test(model=model,datamodule=datamodule,ckpt_path='best')
 
     # Make sure everything closed properly
     log.info("Finalizing!")

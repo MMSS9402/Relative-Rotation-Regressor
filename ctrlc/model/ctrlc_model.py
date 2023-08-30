@@ -131,7 +131,7 @@ class GPTran(nn.Module):
         #         outputs_hvp2,
         #     )
         #hs[:, :, 3:, :]
-        return hs[:, :, 3:, :],memory.permute(0,2,3,1),outputs_vp1[-1],outputs_vp2[-1],outputs_vp3[-1]#,outputs_vline_class[-1], outputs_hline_class[-1],outputs_hline_class2[-1]
+        return hs[:, :, :3, :],memory.permute(0,2,3,1),outputs_vp1[-1],outputs_vp2[-1],outputs_vp3[-1]#,outputs_vline_class[-1], outputs_hline_class[-1],outputs_hline_class2[-1]
 
     def _to_structure_tensor(self, params):
         (a, b, c) = torch.unbind(params, dim=-1)
