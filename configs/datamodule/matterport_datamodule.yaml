@@ -4,10 +4,10 @@ train_ann_filename: "cached_set_moon_train_vp.json"
 val_ann_filename: "cached_set_moon_val_vp.json"
 test_ann_filename: "cached_set_moon_test_vp.json"
 batch_size: 100
-num_workers: 0
+num_workers: 16
 pin_memory: False
 dataset:
   _target_: src.datamodule.components.matterport_dataset.MatterportDataset
-  data_path: "/home/kmuvcl/source/oldCuTi/CuTi/matterport"
+  data_path: "/data/chop-private_164/data/matterport"
   reshape_size: [480, 640]
   use_mini_dataset: False

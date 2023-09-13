@@ -1,8 +1,11 @@
 import csv
+import time
+
 import numpy as np
 import numpy.linalg as LA
 import cv2
 import torch
+import torch.nn.functional as F
 from torch.utils.data import Dataset
 
 from .augmentation import RGBDAugmentor
@@ -22,6 +25,7 @@ class RGBDDataset(Dataset):
         self.data_path = data_path
         self.ann_filename = ann_filename
 
+        self.output_size = reshape_size
         self.aug = RGBDAugmentor(reshape_size=reshape_size)
 
         self.matterport = False
@@ -66,83 +70,100 @@ class RGBDDataset(Dataset):
         lines = np.cross(p1, p2)
         return self.normalize_safe_np(lines)
 
-    def __getitem__(self, index):
-        """return training video"""
-        if self.matterport:
-            images_list = self.scene_info["images"][index]
-            poses = self.scene_info["poses"][index]
-            intrinsics = self.scene_info["intrinsics"][index]
-            lines_list = self.scene_info["lines"][index]
-            vp_list = self.scene_info['vps'][index]
+    def normalize_segs(self, lines, pp, rho=517.97):
+        pp = np.array([pp[0], pp[1], pp[0], pp[1]], dtype=np.float32)
+        return (lines - pp)/rho
 
-            images = []
-            for i in range(2):
-                images.append(self.image_read(images_list[i]))
-
-            poses = np.stack(poses).astype(np.float32)
-            intrinsics = np.stack(intrinsics).astype(np.float32)
-
-            images = np.stack(images).astype(np.float32)
-            images = torch.from_numpy(
-                images
-            ).float()  # [2,480,640,3] => [img_num,w,h,c]
-            images = images.permute(0, 3, 1, 2)  # [2,3,480,640] => [img_num,c,w,h]
-
-            poses = torch.from_numpy(poses)
-            intrinsics = torch.from_numpy(intrinsics)
-            lines = []
-            for i in range(2):
-                lines.append(self.read_line_file(lines_list[i], 10))
-
-            vps = []
-            for i in range(2):
-                vps.append(np.array(vp_list[i]))
-            
-            images, poses, intrinsics, lines, vps, endpoint = self.aug(
-                images, poses, intrinsics, lines, vps
-            )
-
-            return images, poses, intrinsics, lines, vps, endpoint
+    def sample_segs_np(self, segs, num_sample):
+        num_segs = len(segs)
+        sampled_segs = np.zeros([num_sample, 4], dtype=np.float32)
+        mask = np.zeros([num_sample, 1], dtype=np.float32)
+        if num_sample > num_segs:
+            sampled_segs[:num_segs] = segs
+            mask[:num_segs] = np.ones([num_segs, 1], dtype=np.float32)
         else:
-            local_index = index
-            # in case index fails
-            while True:
-                try:
-                    images_list = self.scene_info["images"][local_index]
-                    poses = self.scene_info["poses"][local_index]
-                    intrinsics = self.scene_info["intrinsics"][local_index]
-                    lines_list = self.scene_info["lines"][local_index]
-                    vp_list = self.scene_info['vps'][index]
-                    images = []
-                    
-                    for i in range(2):
-                        images.append(self.image_read(images_list[i]))
-                    
-                    poses = np.stack(poses).astype(np.float32)
-                    intrinsics = np.stack(intrinsics).astype(np.float32)
+            lengths = LA.norm(segs[:, 2:] - segs[:, :2], axis=-1)
+            prob = lengths / np.sum(lengths)
+            idxs = np.random.choice(segs.shape[0], num_sample, replace=True, p=prob)
+            sampled_segs = segs[idxs]
+            mask = np.ones([num_sample, 1], dtype=np.float32)
+        return sampled_segs
 
-                    images = np.stack(images).astype(np.float32)
-                    images = torch.from_numpy(images).float()
-                    images = images.permute(0, 3, 1, 2)
+    def coordinate_yup(self, segs, org_h):
+        H = np.array([0, org_h, 0, org_h])
+        segs[:, 1] = -segs[:, 1]
+        segs[:, 3] = -segs[:, 3]
+        return (H + segs)
 
-                    poses = torch.from_numpy(poses)
-                    intrinsics = torch.from_numpy(intrinsics)
-                    lines = []
-                    for i in range(2):
-                        lines.append(self.read_line_file(lines_list[i], 10))
+    def process_geometry(self, images, poses, intrinsics, lines, vps):
+        endpoint = []
 
-                    vps = []
-                    for i in range(2):
-                        vps.append(np.array(vp_list[i]))
+        sizey, sizex = self.output_size  # (480, 640)
+        scalex = sizex / images.shape[-1]
+        scaley = sizey / images.shape[-2]
 
-                    images, poses, intrinsics, lines, vps, endpoint = self.aug(
-                        images, poses, intrinsics, lines,vps
-                    )
+        xidx = np.array([0, 2])
+        yidx = np.array([1, 3])
+        intrinsics[:, xidx] = scalex * intrinsics[:, xidx]
+        intrinsics[:, yidx] = scaley * intrinsics[:, yidx]
 
-                    return images, poses, intrinsics, lines,vps, endpoint
-                except:
-                    local_index += 1
-                    continue
+        pp = (images.shape[-1] / 2, images.shape[-2] / 2)  # 320, 240
+        # rho = 2.0 / np.minimum(images.shape[-2], images.shape[-1])
+        rho = 517.97  # focal length of matterport dataset
+
+        lines[0] = self.coordinate_yup(lines[0], sizey)
+        lines[0] = self.normalize_segs(lines[0], pp=pp, rho=rho)
+        lines[0] = self.sample_segs_np(lines[0], 512)
+        endpoint.append(lines[0])
+        lines[0] = self.segs2lines_np(lines[0])
+
+        lines[1] = self.coordinate_yup(lines[1], sizey)
+        lines[1] = self.normalize_segs(lines[1], pp=pp, rho=rho)
+        lines[1] = self.sample_segs_np(lines[1], 512)
+        endpoint.append(lines[1])
+        lines[1] = self.segs2lines_np(lines[1])
+
+        images = F.interpolate(images, size=(sizey, sizex))
+        lines = np.array(lines)
+        vps = np.array(vps)
+
+        return images, poses, intrinsics, lines, vps, endpoint
+
+    def __getitem__(self, index):
+        images_list = self.scene_info["images"][index]
+        poses = self.scene_info["poses"][index]
+        intrinsics = self.scene_info["intrinsics"][index]
+        lines_list = self.scene_info["lines"][index]
+        vp_list = self.scene_info['vps'][index]
+
+        images = []
+        for i in range(2):
+            images.append(self.image_read(images_list[i]))
+
+        poses = np.stack(poses).astype(np.float32)
+        intrinsics = np.stack(intrinsics).astype(np.float32)
+
+        images = np.stack(images).astype(np.float32)
+        images = torch.from_numpy(images).float()  # [2,480,640,3] => [img_num,w,h,c]
+        images = images.permute(0, 3, 1, 2)  # [2,3,480,640] => [img_num,c,w,h]
+
+        poses = torch.from_numpy(poses)
+        intrinsics = torch.from_numpy(intrinsics)
+        lines = []
+        for i in range(2):
+            lines.append(self.read_line_file(lines_list[i], 10))
+
+        vps = []
+        for i in range(2):
+            vps.append(np.array(vp_list[i]))
+
+        # images, poses, intrinsics, lines, vps, endpoint = self.aug(
+        #     images, poses, intrinsics, lines, vps
+        # )
+
+        images, poses, intrinsics, lines, vps, endpoint = self.process_geometry(images, poses, intrinsics, lines, vps)
+
+        return images, poses, intrinsics, lines, vps, endpoint
 
     def __len__(self):
         return len(self.scene_info["images"])

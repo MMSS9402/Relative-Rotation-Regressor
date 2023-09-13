@@ -1,6 +1,8 @@
 from typing import Any, List
 import sys
 import os
+import time
+
 import numpy as np
 import hydra.utils
 from pytorch_lightning import LightningModule
@@ -62,7 +64,7 @@ class CuTiLitModule(LightningModule):
         self.feature_embed = nn.Linear(256, self.hidden_dim) # 128
 
         self.image_idx_embedding = nn.Embedding(self.num_image, self.hidden_dim)
-        self.line_idx_embedding = nn.Embedding(3, self.hidden_dim)
+        self.line_idx_embedding = nn.Embedding(self.max_num_line, self.hidden_dim)
 
         self.transformer_block = hydra.utils.instantiate(transformer)
 
@@ -74,7 +76,7 @@ class CuTiLitModule(LightningModule):
             nn.BatchNorm2d(pool_channels[1])
         )
 
-        pose_regressor_input_dim = int(self.num_image * pool_channels[1] * (3))
+        pose_regressor_input_dim = int(self.num_image * pool_channels[1] * self.max_num_line)
 
         self.pose_regressor = nn.Sequential(
             nn.Linear(pose_regressor_input_dim, pose_regressor_hidden_dim),
@@ -97,18 +99,20 @@ class CuTiLitModule(LightningModule):
 
     def forward(self, images: torch.Tensor, lines: torch.Tensor,endpoint: torch.Tensor):
 
-        endpoint[0] = torch.tensor(endpoint[0],dtype=torch.float32)
-        endpoint[1] = torch.tensor(endpoint[1],dtype=torch.float32)
-        # print("lines",lines[0])
+        endpoint[0] = torch.tensor(endpoint[0], dtype=torch.float32)
+        endpoint[1] = torch.tensor(endpoint[1], dtype=torch.float32)
         # [dec_layer, bs, line_num, hidden_dim]
-        hs0, memory0, pred0_vp0, pred0_vp1, pred0_vp2 = self.ctrlc(
-            images[:, 0],
-            lines[:, 0]
-        )
-        hs1, memory1, pred1_vp0, pred1_vp1, pred1_vp2 = self.ctrlc(
-            images[:, 1],
-            lines[:, 1]
-        )
+
+        with torch.no_grad():
+            hs0, memory0, pred0_vp0, pred0_vp1, pred0_vp2 = self.ctrlc(
+                images[:, 0],
+                lines[:, 0]
+            )
+            hs1, memory1, pred1_vp0, pred1_vp1, pred1_vp2 = self.ctrlc(
+                images[:, 1],
+                lines[:, 1]
+            )
+
         pred0_vp = torch.cat([torch.cat([pred0_vp0.unsqueeze(1),pred0_vp1.unsqueeze(1)],dim=1),pred0_vp2.unsqueeze(1)],dim=1)
         pred1_vp = torch.cat([torch.cat([pred1_vp0.unsqueeze(1),pred1_vp1.unsqueeze(1)],dim=1),pred1_vp2.unsqueeze(1)],dim=1)
         # hs0 = rearrange(hs0, "d b n c -> b n c d").contiguous()
@@ -118,13 +122,12 @@ class CuTiLitModule(LightningModule):
         hs1 = hs1[-1]
 
         batch_size = hs0.shape[0]
-        #print(batch_size)
 
         # hs0 = self.feature_embed(hs0)
         # hs1 = self.feature_embed(hs1)
         hs0 = hs0 + self.image_idx_embedding.weight[0] + self.line_idx_embedding.weight
         hs1 = hs1 + self.image_idx_embedding.weight[1] + self.line_idx_embedding.weight
-        
+
         # feat0 = torch.cat([hs0 ], dim=1)
         # feat1 = torch.cat([hs1 ], dim=1)
         feat0 = hs0
@@ -132,23 +135,22 @@ class CuTiLitModule(LightningModule):
         feat0, feat1 = self.transformer_block(feat0, feat1)
 
         feat = torch.cat([feat0.unsqueeze(0), feat0.unsqueeze(0)], dim=0)
-        feat = feat.reshape([batch_size, self.num_image, 3, -1])
+        feat = feat.reshape([batch_size, self.num_image, self.max_num_line, -1])
         feat = rearrange(feat, "b i l c -> b c i l").contiguous()
 
         pooled_feat = self.pool_transformer_output(feat)
         pose_preds = self.pose_regressor(pooled_feat.reshape([batch_size, -1]))
-        
-        #print(pose_preds)
-#self.normalize_preds(pose_preds)
-        return self.normalize_preds(pose_preds), pred0_vp, pred1_vp
+
+        out_dict = {
+            self.normalize_preds(pose_preds), pred0_vp, pred1_vp
+        }
+
+        return
 
     def normalize_preds(self, pose_preds):
         pred_out_Gs = SE3(pose_preds)
-        #print("pose_pred",pose_preds.data)
         Gs = SE3.IdentityLike(pred_out_Gs)
-        #print("gs",Gs.data.shape)
         normalized = pred_out_Gs.data[:, :, 3:].norm(dim=-1).unsqueeze(2)
-        #print(normalized)
         eps = torch.ones_like(normalized) * .01
         pred_out_Gs_new = SE3(torch.clone(pred_out_Gs.data))
         pred_out_Gs_new.data[:, :, 3:] = pred_out_Gs.data[:, :, 3:] / torch.max(normalized, eps)
@@ -156,7 +158,6 @@ class CuTiLitModule(LightningModule):
         these_out_Gs = SE3(torch.cat([Gs[:, :1].data, pred_out_Gs_new.data[:, 1:]], dim=1))
         out_Gs = [these_out_Gs]
         return out_Gs
-    
 
     def eval_camera(self,predictions):
         acc_threshold = {
@@ -191,11 +192,11 @@ class CuTiLitModule(LightningModule):
         pred_mags = {"tran":np.linalg.norm(pred_tran, axis=1), "rot": 2 * np.arccos(pred_rot[:,0]) * 180 / np.pi}
         
         tran_graph = np.stack([gt_mags['tran'], pred_mags['tran'],top1_error['tran']],axis=1)
-        tran_graph_name = os.path.join('/home/kmuvcl/source/oldCuTi/CuTi/logs/output2', 'gt_translation_magnitude_vs_error.csv')
+        tran_graph_name = os.path.join('./logs/output2', 'gt_translation_magnitude_vs_error.csv')
         np.savetxt(tran_graph_name, tran_graph, delimiter=',', fmt='%1.5f')
 
         rot_graph = np.stack([gt_mags['rot'],pred_mags['rot'], top1_error['rot']],axis=1)
-        rot_graph_name = os.path.join('/home/kmuvcl/source/oldCuTi/CuTi/logs/output2', 'gt_rotation_magnitude_vs_error.csv')
+        rot_graph_name = os.path.join('./logs/output2', 'gt_rotation_magnitude_vs_error.csv')
         np.savetxt(rot_graph_name, rot_graph, delimiter=',', fmt='%1.5f')
         return camera_metrics
 
@@ -205,12 +206,10 @@ class CuTiLitModule(LightningModule):
     def shared_step(self, batch: Any):
         images, poses, intrinsics, lines, vps, endpoint = batch
         Ps = SE3(poses)
-        
+
         pose_preds,pred0_vp,pred1_vp = self.forward(images, lines, endpoint)
-    
+
         loss, loss_dict = self.criterion(Ps, pose_preds)
-        
-        # loss, loss_dict = self.Rel_criterion(poses, pose_preds)
 
         return loss, loss_dict, pose_preds, poses
 
@@ -219,6 +218,8 @@ class CuTiLitModule(LightningModule):
 
         # update and log metrics
         self.log("train/loss", loss, on_step=False, on_epoch=True, prog_bar=True)
+        self.log("train/loss_tr", loss_dict["loss_tr"], on_step=False, on_epoch=True, prog_bar=True)
+        self.log("train/loss_rot", loss_dict["loss_rot"], on_step=False, on_epoch=True, prog_bar=True)
         # self.log("train/acc", acc, on_step=False, on_epoch=True, prog_bar=True)
 
         # return loss or backpropagation will fail
@@ -232,6 +233,8 @@ class CuTiLitModule(LightningModule):
 
         # update and log metrics
         self.log("val/loss", loss, on_step=False, on_epoch=True, prog_bar=True)
+        self.log("val/loss_tr", loss_dict["loss_tr"], on_step=False, on_epoch=True, prog_bar=True)
+        self.log("val/loss_rot", loss_dict["loss_rot"], on_step=False, on_epoch=True, prog_bar=True)
         # self.log("val/acc", acc, on_step=False, on_epoch=True, prog_bar=True)
 
     def validation_epoch_end(self, outputs: List[Any]):
@@ -261,15 +264,14 @@ class CuTiLitModule(LightningModule):
         predictions = outputs[0][0]
         vp_loss0 = outputs[0][1]
         vp_loss1 = outputs[0][2]
-        print("vploss0 average loss : ",sum(vp_loss0)/len(vp_loss0))
-        print("vploss0 max loss : ",max(vp_loss0))
-        print("vploss0 min loss : ",min(vp_loss0))
-        print("vploss1 average loss : ",sum(vp_loss1)/len(vp_loss1))
-        print("vploss1 max loss : ",max(vp_loss1))
-        print("vploss1 min loss : ",min(vp_loss1))
+        print("vploss0 average loss : ", sum(vp_loss0)/len(vp_loss0))
+        print("vploss0 max loss : ", max(vp_loss0))
+        print("vploss0 min loss : ", min(vp_loss0))
+        print("vploss1 average loss : ", sum(vp_loss1)/len(vp_loss1))
+        print("vploss1 max loss : ", max(vp_loss1))
+        print("vploss1 min loss : ", min(vp_loss1))
         camera_metrics = self.eval_camera(predictions)
-        
-        
+
         for k in camera_metrics:
             print(k, camera_metrics[k])
 

@@ -1,21 +1,17 @@
 from typing import List, Optional
 
-import torch
-
 import hydra
 from omegaconf import DictConfig
 from pytorch_lightning import (
     Callback,
     LightningDataModule,
     LightningModule,
-    Trainer,
     seed_everything,
 )
 from pytorch_lightning.loggers import LightningLoggerBase
 
 from src.utils import utils
 
-from pytorch_lightning.loggers import WandbLogger
 from pytorch_lightning import Trainer
 
 log = utils.get_logger(__name__)
@@ -79,8 +75,6 @@ def train(config: DictConfig) -> Optional[float]:
         logger=logger,
     )
 
-    
-
     # Train the model
     log.info("Starting training!")
     trainer.fit(model=model, datamodule=datamodule)
@@ -88,16 +82,6 @@ def train(config: DictConfig) -> Optional[float]:
     # Evaluate model on test set, using the best model achieved during training
     if config.get("test_after_training") and not config.trainer.get("fast_dev_run"):
         log.info("Starting testing!")
-        # check_point = torch.load(config.get('checkpoint_filepath')+config.get("checkpoint_filename"))
-        
-        
-        # check_point = torch.load("/home/kmuvcl/source/oldCuTi/CuTi/logs/runs/2023-08-13/22-19-33/checkpoints/last.ckpt")
-        # model.load_state_dict(check_point['state_dict'])
-        
-        
-        #model = LightningModule.load_from_checkpoint("/home/kmuvcl/source/oldCuTi/CuTi/logs/runs/2023-08-16/17-50-28/checkpoints/epoch_000.ckpt",strict=False)
-        #print(check_point['state_dict'])
-        #print("load_model")
         trainer.test(model=model,datamodule=datamodule,ckpt_path='best')
 
     # Make sure everything closed properly

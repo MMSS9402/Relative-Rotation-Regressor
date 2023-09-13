@@ -37,17 +37,16 @@ class MatterportDataset(RGBDDataset):
         poses_list = []
         intrinsics_list = []
 
-        basepath = "/Pool1/users/jinlinyi/dataset/mp3d_rpnet_v4_sep20"
+        original_basepath = "/Pool1/users/jinlinyi/dataset/mp3d_rpnet_v4_sep20"
 
         for data in split["data"].values():
             vps = []
             images = []
             lines = []
             for img_idx in ["0", "1"]:
-                img_path = data[img_idx]["file_name"].replace(basepath, self.data_path)
+                img_path = data[img_idx]["file_name"].replace(original_basepath, self.data_path)
                 line_path = img_path.replace(".png", "_line.csv",)
-                # print("img_path",img_path)
-                # print('line_path',line_path)
+
                 vp1 = data[img_idx]['vp1']
                 vp2 = data[img_idx]['vp2']
                 vp3 = data[img_idx]['vp3']
