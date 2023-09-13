@@ -113,13 +113,13 @@ class RGBDDataset(Dataset):
 
         lines[0] = self.coordinate_yup(lines[0], sizey)
         lines[0] = self.normalize_segs(lines[0], pp=pp, rho=rho)
-        lines[0] = self.sample_segs_np(lines[0], 512)
+        lines[0] = self.sample_segs_np(lines[0], num_sample=512)
         endpoint.append(lines[0])
         lines[0] = self.segs2lines_np(lines[0])
 
         lines[1] = self.coordinate_yup(lines[1], sizey)
         lines[1] = self.normalize_segs(lines[1], pp=pp, rho=rho)
-        lines[1] = self.sample_segs_np(lines[1], 512)
+        lines[1] = self.sample_segs_np(lines[1], num_sample=512)
         endpoint.append(lines[1])
         lines[1] = self.segs2lines_np(lines[1])
 
@@ -143,9 +143,9 @@ class RGBDDataset(Dataset):
         poses = np.stack(poses).astype(np.float32)
         intrinsics = np.stack(intrinsics).astype(np.float32)
 
-        images = np.stack(images).astype(np.float32)
-        images = torch.from_numpy(images).float()  # [2,480,640,3] => [img_num,w,h,c]
-        images = images.permute(0, 3, 1, 2)  # [2,3,480,640] => [img_num,c,w,h]
+        images = np.stack(images).astype(np.float32) / 255.0
+        images = torch.from_numpy(images).float() # [2,480,640,3] => [img_num,h,w,c]
+        images = images.permute(0, 3, 1, 2)  # [2,3,480,640] => [img_num,c,h,w]
 
         poses = torch.from_numpy(poses)
         intrinsics = torch.from_numpy(intrinsics)
@@ -160,8 +160,8 @@ class RGBDDataset(Dataset):
         # images, poses, intrinsics, lines, vps, endpoint = self.aug(
         #     images, poses, intrinsics, lines, vps
         # )
-
-        images, poses, intrinsics, lines, vps, endpoint = self.process_geometry(images, poses, intrinsics, lines, vps)
+        images, poses, intrinsics, lines, vps, endpoint = self.process_geometry(
+            images, poses, intrinsics, lines, vps)
 
         return images, poses, intrinsics, lines, vps, endpoint
 

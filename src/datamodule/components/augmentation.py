@@ -20,8 +20,6 @@ class RGBDAugmentor:
             ]
         )
 
-
-
     def color_transform(self, images):
         """color jittering"""
         num, ch, ht, wd = images.shape
