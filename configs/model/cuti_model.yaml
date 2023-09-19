@@ -40,7 +40,8 @@ pose_regressor_hidden_dim: 256
 pose_size: 7
 
 criterion:
-  _target_: src.models.components.losses.GeodesicLoss
+#  _target_: src.models.components.losses.GeodesicLoss
+  _target_: src.models.components.losses.L1Loss
   weights:
     translation: 10.0
     rotation: 10.0

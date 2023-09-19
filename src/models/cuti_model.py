@@ -150,16 +150,23 @@ class CuTiLitModule(LightningModule):
                 "pred_view1_vps": pred_view1_vps,
                 }
 
-    def normalize_preds(self, pred_poses):
-        pred_out_se3 = SE3(pred_poses)
-        Gs = SE3.IdentityLike(pred_out_se3)
-        normalized = pred_out_se3.data[:, :, 3:].norm(dim=-1).unsqueeze(2)
-        eps = torch.ones_like(normalized) * .01
-        pred_out_se3_new = SE3(torch.clone(pred_out_se3.data))
-        pred_out_se3_new.data[:, :, 3:] = pred_out_se3.data[:, :, 3:] / torch.max(normalized, eps)
+    # def normalize_preds(self, pred_poses):
+    #     pred_out_se3 = SE3(pred_poses)
+    #     Gs = SE3.IdentityLike(pred_out_se3)
+    #     normalized = pred_out_se3.data[:, :, 3:].norm(dim=-1).unsqueeze(2)
+    #     eps = torch.ones_like(normalized) * .01
+    #     pred_out_se3_new = SE3(torch.clone(pred_out_se3.data))
+    #     pred_out_se3_new.data[:, :, 3:] = pred_out_se3.data[:, :, 3:] / torch.max(normalized, eps)
+    #
+    #     out_Gs = SE3(torch.cat([Gs[:, :1].data, pred_out_se3_new.data[:, 1:]], dim=1))
+    #     return out_Gs
 
-        out_Gs = SE3(torch.cat([Gs[:, :1].data, pred_out_se3_new.data[:, 1:]], dim=1))
-        return out_Gs
+    def normalize_preds(self, pred_poses):
+        normalized_rot = pred_poses.data[:, :, 3:].norm(dim=-1, keepdim=True)
+        eps = torch.ones_like(normalized_rot) * .01
+        pred_poses_new = torch.clone(pred_poses)
+        pred_poses_new[:, :, 3:] = pred_poses.data[:, :, 3:] / torch.max(normalized_rot, eps)
+        return pred_poses_new
 
     def eval_camera(self, predictions):
         acc_threshold = {
