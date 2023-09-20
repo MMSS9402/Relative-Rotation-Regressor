@@ -1,7 +1,9 @@
-from typing import Any, List
+from typing import Any, List, Optional
 import sys
 import os
 import time
+
+import torch.nn.functional as F
 
 import numpy as np
 import hydra.utils
@@ -13,6 +15,7 @@ from lietorch import SE3
 from omegaconf import DictConfig
 from einops import rearrange
 import cv2
+from torch import linalg as LA
 
 root = pyrootutils.find_root(__file__)
 sys.path.insert(0, str(root / "ctrlc"))
@@ -94,6 +97,8 @@ class CuTiLitModule(LightningModule):
             nn.Unflatten(1, (self.num_image, pose_size)),
         )
 
+        self.query_embed = nn.Embedding(2, hidden_dim)
+
         self.criterion = hydra.utils.instantiate(criterion)
         self.test_camera = hydra.utils.instantiate(test_metric)
 
@@ -129,13 +134,13 @@ class CuTiLitModule(LightningModule):
 
         batch_size = hs0.shape[0]
 
-        hs0 = hs0 + self.image_idx_embedding.weight[0] + self.line_idx_embedding.weight
-        hs1 = hs1 + self.image_idx_embedding.weight[1] + self.line_idx_embedding.weight
+        hs0[:, 3:, :] = hs0[:, 3:, :] + self.image_idx_embedding.weight[0] + self.line_idx_embedding.weight
+        hs1[:, 3:, :] = hs1[:, 3:, :] + self.image_idx_embedding.weight[1] + self.line_idx_embedding.weight
 
         # feat0 = torch.cat([hs0 ], dim=1)
         # feat1 = torch.cat([hs1 ], dim=1)
-        feat0 = hs0
-        feat1 = hs1
+        feat0 = hs0[:, 3:, :]
+        feat1 = hs1[:, 3:, :]
         feat0, feat1 = self.transformer_block(feat0, feat1)
 
         feat = torch.cat([feat0.unsqueeze(0), feat0.unsqueeze(0)], dim=0)
@@ -150,16 +155,23 @@ class CuTiLitModule(LightningModule):
                 "pred_view1_vps": pred_view1_vps,
                 }
 
-    def normalize_preds(self, pred_poses):
-        pred_out_se3 = SE3(pred_poses)
-        Gs = SE3.IdentityLike(pred_out_se3)
-        normalized = pred_out_se3.data[:, :, 3:].norm(dim=-1).unsqueeze(2)
-        eps = torch.ones_like(normalized) * .01
-        pred_out_se3_new = SE3(torch.clone(pred_out_se3.data))
-        pred_out_se3_new.data[:, :, 3:] = pred_out_se3.data[:, :, 3:] / torch.max(normalized, eps)
+    # def normalize_preds(self, pred_poses):
+    #     pred_out_se3 = SE3(pred_poses)
+    #     Gs = SE3.IdentityLike(pred_out_se3)
+    #     normalized = pred_out_se3.data[:, :, 3:].norm(dim=-1).unsqueeze(2)
+    #     eps = torch.ones_like(normalized) * .01
+    #     pred_out_se3_new = SE3(torch.clone(pred_out_se3.data))
+    #     pred_out_se3_new.data[:, :, 3:] = pred_out_se3.data[:, :, 3:] / torch.max(normalized, eps)
+    #
+    #     out_Gs = SE3(torch.cat([Gs[:, :1].data, pred_out_se3_new.data[:, 1:]], dim=1))
+    #     return out_Gs
 
-        out_Gs = SE3(torch.cat([Gs[:, :1].data, pred_out_se3_new.data[:, 1:]], dim=1))
-        return out_Gs
+    def normalize_preds(self, pred_poses):
+        normalized_rot = pred_poses.data[:, :, 3:].norm(dim=-1, keepdim=True)
+        eps = torch.ones_like(normalized_rot) * .01
+        pred_poses_new = torch.clone(pred_poses)
+        pred_poses_new[:, :, 3:] = pred_poses.data[:, :, 3:] / torch.max(normalized_rot, eps)
+        return pred_poses_new
 
     def eval_camera(self, predictions):
         acc_threshold = {
@@ -210,7 +222,7 @@ class CuTiLitModule(LightningModule):
 
     def shared_step(self, batch: Any):
         images, poses, intrinsics, lines, vps, endpoint = batch
-        target_poses = SE3(poses)
+        target_poses = poses
 
         pred_dict = self.forward(images, lines, endpoint)
         pred_poses = pred_dict["pred_pose"]
@@ -244,25 +256,25 @@ class CuTiLitModule(LightningModule):
         # self.log("val/acc", acc, on_step=False, on_epoch=True, prog_bar=True)
 
         # visualization
-        if batch_idx == 0:
-            images, poses, *rest = batch
+        # if batch_idx == 0:
+        #     images, poses, *rest = batch
 
-            src_image = convert_tensor_to_cv_image(images[0, 0])
-            dst_image = convert_tensor_to_cv_image(images[0, 1])
+        #     src_image = convert_tensor_to_cv_image(images[0, 0])
+        #     dst_image = convert_tensor_to_cv_image(images[0, 1])
 
-            target_rel_pose = convert_tensor_to_numpy_array(target[0, 1])
-            pred_rel_pose = convert_tensor_to_numpy_array(preds[0, 1].data)
+        #     target_rel_pose = convert_tensor_to_numpy_array(target[0, 1])
+        #     pred_rel_pose = convert_tensor_to_numpy_array(preds[0, 1].data)
 
-            target_epipolar_image = generate_epipolar_image(src_image, dst_image, target_rel_pose)
-            pred_epipolar_image = generate_epipolar_image(src_image, dst_image, pred_rel_pose)
+        #     target_epipolar_image = generate_epipolar_image(src_image, dst_image, target_rel_pose)
+        #     pred_epipolar_image = generate_epipolar_image(src_image, dst_image, pred_rel_pose)
 
-            epipolar_image = np.concatenate([target_epipolar_image, pred_epipolar_image], axis=0)
+        #     epipolar_image = np.concatenate([target_epipolar_image, pred_epipolar_image], axis=0)
 
-            # import pdb; pdb.set_trace()
+        #     # import pdb; pdb.set_trace()
 
-            os.makedirs("./output", exist_ok=True)
-            epipolar_image_path = os.path.join("./output", f"epipolar_{self.current_epoch:03d}.png")
-            cv2.imwrite(epipolar_image_path, epipolar_image)
+        #     os.makedirs("./output", exist_ok=True)
+        #     epipolar_image_path = os.path.join("./output", f"epipolar_{self.current_epoch:03d}.png")
+        #     cv2.imwrite(epipolar_image_path, epipolar_image)
 
     def validation_epoch_end(self, outputs: List[Any]):
         pass
@@ -271,18 +283,18 @@ class CuTiLitModule(LightningModule):
         images, poses, intrinsics, lines, vps, endpoint = batch
         vps = rearrange(vps, "b i l c -> i b l c ").contiguous()
 
-        pose_preds, pred0_vp, pred1_vp = self.forward(images, lines, endpoint)
+        pred_dict = self.forward(images, lines, endpoint)
 
-        index0 = self.matcher(pred0_vp, vps[0])
-        index1 = self.matcher(pred1_vp, vps[1])
+        index0 = self.matcher(pred_dict["pred_view0_vps"], vps[0])
+        index1 = self.matcher(pred_dict["pred_view1_vps"], vps[1])
 
-        vp_loss0 = self.vp_criterion(pred0_vp, vps[0], index0)
-        vp_loss1 = self.vp_criterion(pred1_vp, vps[1], index1)
+        vp_loss0 = self.vp_criterion(pred_dict["pred_view0_vps"], vps[0], index0)
+        vp_loss1 = self.vp_criterion(pred_dict["pred_view1_vps"], vps[1], index1)
 
         self.vp_loss0.append(vp_loss0.tolist())
         self.vp_loss1.append(vp_loss1.tolist())
 
-        predictions = self.test_camera(poses, pose_preds, self.predictions)
+        predictions = self.test_camera(poses, pred_dict["pred_pose"], self.predictions)
 
         return predictions, self.vp_loss0, self.vp_loss1
 

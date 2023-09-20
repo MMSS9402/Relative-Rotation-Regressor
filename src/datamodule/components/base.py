@@ -157,9 +157,9 @@ class RGBDDataset(Dataset):
         for i in range(2):
             vps.append(np.array(vp_list[i]))
 
-        # images, poses, intrinsics, lines, vps, endpoint = self.aug(
-        #     images, poses, intrinsics, lines, vps
-        # )
+        images = self.aug(
+            images
+        )
         images, poses, intrinsics, lines, vps, endpoint = self.process_geometry(
             images, poses, intrinsics, lines, vps)
 

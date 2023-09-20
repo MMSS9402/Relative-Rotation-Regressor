@@ -1,5 +1,5 @@
 from typing import List, Optional
-
+import torch
 import hydra
 from omegaconf import DictConfig
 from pytorch_lightning import (
@@ -82,6 +82,8 @@ def train(config: DictConfig) -> Optional[float]:
     # Evaluate model on test set, using the best model achieved during training
     if config.get("test_after_training") and not config.trainer.get("fast_dev_run"):
         log.info("Starting testing!")
+        # check_point = torch.load("/home/kmuvcl/source/CuTi/logs/runs/2023-09-20/11-26-04/checkpoints/epoch_005.ckpt")
+        # model.load_state_dict(check_point['state_dict'])
         trainer.test(model=model,datamodule=datamodule,ckpt_path='best')
 
     # Make sure everything closed properly

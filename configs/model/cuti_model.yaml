@@ -19,7 +19,7 @@ ctrlc:
       NUM_QUERIES: 3
       PRE_NORM: False
 
-ctrlc_checkpoint_path: "/data/chop-private_164/CuTi/ckpt/checkpoint0099.pth"
+ctrlc_checkpoint_path: "/home/kmuvcl/source/CTRL-C/loco/checkpoint0071.pth"
 
 pos_encoder:
   _target_: src.models.components.position_encoding.PositionEncodingSine1D
@@ -40,9 +40,10 @@ pose_regressor_hidden_dim: 256
 pose_size: 7
 
 criterion:
-  _target_: src.models.components.losses.GeodesicLoss
+#  _target_: src.models.components.losses.GeodesicLoss
+  _target_: src.models.components.losses.L1Loss
   weights:
-    translation: 10.0
+    translation: 0.0
     rotation: 10.0
 
 vp_criterion:

@@ -29,7 +29,6 @@ class HungarianMatcher(nn.Module):
     def forward(self, outputs, targets):
         
         pred_vp = outputs
-
         pred_vp0 = outputs[:,0,:]
         pred_vp1 = outputs[:,1,:] 
         pred_vp2 = outputs[:,2,:] 
