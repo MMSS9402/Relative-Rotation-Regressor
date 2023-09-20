@@ -94,6 +94,8 @@ class CuTiLitModule(LightningModule):
             nn.Unflatten(1, (self.num_image, pose_size)),
         )
 
+        self.query_embed = nn.Embedding(2, hidden_dim)
+
         self.criterion = hydra.utils.instantiate(criterion)
         self.test_camera = hydra.utils.instantiate(test_metric)
 
@@ -216,15 +218,14 @@ class CuTiLitModule(LightningModule):
         pass
 
     def shared_step(self, batch: Any):
-        images, poses, intrinsics, lines, vps, endpoint = batch
-        target_poses = SE3(poses)
+        images, target_poses, intrinsics, lines, vps, endpoint = batch
 
         pred_dict = self.forward(images, lines, endpoint)
         pred_poses = pred_dict["pred_pose"]
 
         loss, loss_dict = self.criterion(target_poses, pred_poses)
 
-        return loss, loss_dict, pred_poses, poses
+        return loss, loss_dict, pred_poses, target_poses
 
     def training_step(self, batch: Any, batch_idx: int):
         loss, loss_dict, preds, target = self.shared_step(batch)
@@ -252,23 +253,25 @@ class CuTiLitModule(LightningModule):
 
         # visualization
         if batch_idx == 0:
-            images, poses, *rest = batch
+            images, *rest = batch
+
+            target_rel_pose = convert_tensor_to_numpy_array(target[0, 1])
+            pred_rel_pose = convert_tensor_to_numpy_array(preds[0, 1])
+
+            rel_poses = np.stack([target_rel_pose, pred_rel_pose])
+
+            output_txt_name = f"pose_{self.current_epoch:03d}.csv"
+            np.savetxt(output_txt_name, rel_poses, delimiter=',', fmt='%1.5f')
 
             src_image = convert_tensor_to_cv_image(images[0, 0])
             dst_image = convert_tensor_to_cv_image(images[0, 1])
-
-            target_rel_pose = convert_tensor_to_numpy_array(target[0, 1])
-            pred_rel_pose = convert_tensor_to_numpy_array(preds[0, 1].data)
 
             target_epipolar_image = generate_epipolar_image(src_image, dst_image, target_rel_pose)
             pred_epipolar_image = generate_epipolar_image(src_image, dst_image, pred_rel_pose)
 
             epipolar_image = np.concatenate([target_epipolar_image, pred_epipolar_image], axis=0)
 
-            # import pdb; pdb.set_trace()
-
-            os.makedirs("./output", exist_ok=True)
-            epipolar_image_path = os.path.join("./output", f"epipolar_{self.current_epoch:03d}.png")
+            epipolar_image_path = f"epipolar_{self.current_epoch:03d}.png"
             cv2.imwrite(epipolar_image_path, epipolar_image)
 
     def validation_epoch_end(self, outputs: List[Any]):

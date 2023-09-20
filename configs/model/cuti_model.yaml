@@ -19,6 +19,7 @@ ctrlc:
       NUM_QUERIES: 3
       PRE_NORM: False
 
+#ctrlc_checkpoint_path: "/home/kmuvcl/source/oldCuTi/CuTi/checkpoint/checkpoint0099.pth"
 ctrlc_checkpoint_path: "/data/chop-private_164/CuTi/ckpt/checkpoint0099.pth"
 
 pos_encoder:
@@ -67,8 +68,8 @@ matcher:
 
 optimizer:
   _target_: torch.optim.AdamW
-  lr: 1e-5
-  weight_decay: 1e-5
+  lr: 1e-4
+  weight_decay: 1e-4
 
 scheduler:
   _target_: torch.optim.lr_scheduler.ReduceLROnPlateau

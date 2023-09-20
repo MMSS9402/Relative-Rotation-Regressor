@@ -1,5 +1,4 @@
-import csv
-import time
+import copy
 
 import numpy as np
 import numpy.linalg as LA
@@ -44,18 +43,6 @@ class RGBDDataset(Dataset):
     @staticmethod
     def image_read(image_file):
         return cv2.imread(image_file)
-
-    def read_line_file(self, filename: str, min_line_length=10):
-        segs = []  # line segments
-
-        with open(filename, "r") as csvfile:
-            csvreader = csv.reader(csvfile)
-            for row in csvreader:
-                segs.append([float(row[0]), float(row[1]), float(row[2]), float(row[3])])
-        segs = np.array(segs, dtype=np.float32)
-        lengths = LA.norm(segs[:, 2:] - segs[:, :2], axis=1)
-        segs = segs[lengths > min_line_length]
-        return segs
 
     def normalize_safe_np(self, v, axis=-1, eps=1e-6):
         de = LA.norm(v, axis=axis, keepdims=True)
@@ -123,7 +110,7 @@ class RGBDDataset(Dataset):
         endpoint.append(lines[1])
         lines[1] = self.segs2lines_np(lines[1])
 
-        images = F.interpolate(images, size=(sizey, sizex))
+        images = F.interpolate(images, size=(sizey, sizex), mode="bilinear")
         lines = np.array(lines)
         vps = np.array(vps)
 
@@ -149,9 +136,7 @@ class RGBDDataset(Dataset):
 
         poses = torch.from_numpy(poses)
         intrinsics = torch.from_numpy(intrinsics)
-        lines = []
-        for i in range(2):
-            lines.append(self.read_line_file(lines_list[i], 10))
+        lines = copy.deepcopy(lines_list)
 
         vps = []
         for i in range(2):
