@@ -34,6 +34,13 @@ transformer:
   layer_types: ["self", "cross"]
   attention: "linear"
 
+pose_transformer:
+  _target_: src.models.components.transformer.LocalFeatureTransformer
+  d_model: 256 #512
+  nhead: 8
+  layer_types: ["self", "cross"]
+  attention: "linear"
+
 max_num_line: 512
 hidden_dim: 256 #512
 pool_channels: [32, 16]

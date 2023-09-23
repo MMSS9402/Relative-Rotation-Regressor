@@ -30,6 +30,7 @@ class CuTiLitModule(LightningModule):
             ctrlc: DictConfig,
             ctrlc_checkpoint_path: str,
             transformer: DictConfig,
+            pose_transformer: DictConfig,
             pos_encoder: DictConfig,
             max_num_line: int,
             hidden_dim: int,
@@ -73,28 +74,38 @@ class CuTiLitModule(LightningModule):
         self.image_idx_embedding = nn.Embedding(self.num_image, self.hidden_dim)
         self.line_idx_embedding = nn.Embedding(self.max_num_line, self.hidden_dim)
 
+        self.query_embed = nn.Embedding(2, hidden_dim)
+
         self.transformer_block = hydra.utils.instantiate(transformer)
 
-        self.pool_transformer_output = nn.Sequential(
-            nn.Conv2d(hidden_dim, pool_channels[0], kernel_size=1, bias=False),
-            nn.BatchNorm2d(pool_channels[0]),
-            nn.ReLU(),
-            nn.Conv2d(pool_channels[0], pool_channels[1], kernel_size=1, bias=False),
-            nn.BatchNorm2d(pool_channels[1])
-        )
-
-        pose_regressor_input_dim = int(self.num_image * pool_channels[1] * self.max_num_line)
+        self.pose_transformer_block = hydra.utils.instantiate(transformer)
 
         self.pose_regressor = nn.Sequential(
-            nn.Linear(pose_regressor_input_dim, pose_regressor_hidden_dim),
+            nn.Linear(hidden_dim, hidden_dim),
             nn.ReLU(),
-            nn.Linear(pose_regressor_hidden_dim, pose_regressor_hidden_dim),
+            nn.Linear(hidden_dim, hidden_dim),
             nn.ReLU(),
-            nn.Linear(pose_regressor_hidden_dim, self.num_image * pose_size),
-            nn.Unflatten(1, (self.num_image, pose_size)),
+            nn.Linear(hidden_dim, pose_size),
         )
 
-        self.query_embed = nn.Embedding(2, hidden_dim)
+        # self.pool_transformer_output = nn.Sequential(
+        #     nn.Conv2d(hidden_dim, pool_channels[0], kernel_size=1, bias=False),
+        #     nn.BatchNorm2d(pool_channels[0]),
+        #     nn.ReLU(),
+        #     nn.Conv2d(pool_channels[0], pool_channels[1], kernel_size=1, bias=False),
+        #     nn.BatchNorm2d(pool_channels[1])
+        # )
+        #
+        # pose_regressor_input_dim = int(self.num_image * pool_channels[1] * self.max_num_line)
+
+        # self.pose_regressor = nn.Sequential(
+        #     nn.Linear(pose_regressor_input_dim, pose_regressor_hidden_dim),
+        #     nn.ReLU(),
+        #     nn.Linear(pose_regressor_hidden_dim, pose_regressor_hidden_dim),
+        #     nn.ReLU(),
+        #     nn.Linear(pose_regressor_hidden_dim, self.num_image * pose_size),
+        #     nn.Unflatten(1, (self.num_image, pose_size)),
+        # )
 
         self.criterion = hydra.utils.instantiate(criterion)
         self.test_camera = hydra.utils.instantiate(test_metric)
@@ -136,16 +147,40 @@ class CuTiLitModule(LightningModule):
 
         # feat0 = torch.cat([hs0 ], dim=1)
         # feat1 = torch.cat([hs1 ], dim=1)
+        # feat0 = torch.cat([hs0, self.query_embed.weight[0]], dim=0)
+        # feat1 = torch.cat([hs1, self.query_embed.weight[1]], dim=0)
         feat0 = hs0
         feat1 = hs1
         feat0, feat1 = self.transformer_block(feat0, feat1)
 
-        feat = torch.cat([feat0.unsqueeze(0), feat0.unsqueeze(0)], dim=0)
-        feat = feat.reshape([batch_size, self.num_image, self.max_num_line, -1])
-        feat = rearrange(feat, "b i l c -> b c i l").contiguous()
+        query0_embed_weight = self.query_embed.weight[0].unsqueeze(0).unsqueeze(0)
+        query0_embed_weight = query0_embed_weight.repeat(
+            batch_size, 1, 1
+        )
+        query1_embed_weight = self.query_embed.weight[1].unsqueeze(0).unsqueeze(0)
+        query1_embed_weight = query1_embed_weight.repeat(
+            batch_size, 1, 1
+        )
 
-        pooled_feat = self.pool_transformer_output(feat)
-        pose_preds = self.pose_regressor(pooled_feat.reshape([batch_size, -1]))
+        feat0 = torch.cat([feat0, query0_embed_weight], dim=1)
+        feat1 = torch.cat([feat1, query1_embed_weight], dim=1)
+
+        feat0, feat1 = self.pose_transformer_block(feat0, feat1)
+
+        view0_feat = feat0[:, -1, :]
+        view1_feat = feat1[:, -1, :]
+
+        feat = torch.stack([view0_feat, view1_feat], dim=1)
+        pose_preds = self.pose_regressor(feat)
+
+        # import pdb; pdb.set_trace()
+
+        # feat = torch.cat([feat0.unsqueeze(0), feat0.unsqueeze(0)], dim=0)
+        # feat = feat.reshape([batch_size, self.num_image, self.max_num_line, -1])
+        # feat = rearrange(feat, "b i l c -> b c i l").contiguous()
+        #
+        # pooled_feat = self.pool_transformer_output(feat)
+        # pose_preds = self.pose_regressor(pooled_feat.reshape([batch_size, -1]))
 
         return {"pred_pose": self.normalize_preds(pose_preds),
                 "pred_view0_vps": pred_view0_vps,
