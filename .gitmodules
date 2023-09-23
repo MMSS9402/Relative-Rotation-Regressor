@@ -1,0 +1,3 @@
+[submodule "ctrlc"]
+	path = ctrlc
+	url = https://jwlee-vcl@github.com/MMSS9402/CTRL-C.git
