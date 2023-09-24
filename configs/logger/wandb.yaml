@@ -2,7 +2,7 @@
 
 wandb:
   _target_: pytorch_lightning.loggers.wandb.WandbLogger
-  project: "L1 Loss"
+  project: "VP+bilinear"
   name: ${name}
   save_dir: "."
   offline: False # set True to store all logs only locally

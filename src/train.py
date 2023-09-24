@@ -75,14 +75,14 @@ def train(config: DictConfig) -> Optional[float]:
         logger=logger,
     )
 
-    # Train the model
+    # # Train the model
     log.info("Starting training!")
     trainer.fit(model=model, datamodule=datamodule)
 
     # Evaluate model on test set, using the best model achieved during training
     if config.get("test_after_training") and not config.trainer.get("fast_dev_run"):
         log.info("Starting testing!")
-        # check_point = torch.load("/home/kmuvcl/source/CuTi/logs/runs/2023-09-20/11-26-04/checkpoints/epoch_005.ckpt")
+        # check_point = torch.load("/home/kmuvcl/source/CuTi/logs/runs/2023-09-21/18-03-56/checkpoints/last.ckpt")
         # model.load_state_dict(check_point['state_dict'])
         trainer.test(model=model,datamodule=datamodule,ckpt_path='best')
 

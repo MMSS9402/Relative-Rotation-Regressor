@@ -45,7 +45,6 @@ class CuTiLitModule(LightningModule):
             scheduler: DictConfig,
             matcher: DictConfig,
             vp_criterion: DictConfig,
-            Rel_criterion: DictConfig,
     ):
         super().__init__()
 
@@ -86,7 +85,7 @@ class CuTiLitModule(LightningModule):
             nn.BatchNorm2d(pool_channels[1])
         )
 
-        pose_regressor_input_dim = int(self.num_image * pool_channels[1] * self.max_num_line)
+        pose_regressor_input_dim = int(self.num_image * pool_channels[1] * (self.num_vp))
 
         self.pose_regressor = nn.Sequential(
             nn.Linear(pose_regressor_input_dim, pose_regressor_hidden_dim),
@@ -104,7 +103,6 @@ class CuTiLitModule(LightningModule):
 
         self.matcher = hydra.utils.instantiate(matcher)
         self.vp_criterion = hydra.utils.instantiate(vp_criterion)
-        self.Rel_criterion = hydra.utils.instantiate(Rel_criterion)
 
         self.optimizer = optimizer
         self.scheduler = scheduler
@@ -139,12 +137,19 @@ class CuTiLitModule(LightningModule):
 
         # feat0 = torch.cat([hs0 ], dim=1)
         # feat1 = torch.cat([hs1 ], dim=1)
-        feat0 = hs0[:, 3:, :]
-        feat1 = hs1[:, 3:, :]
+        feat0 = hs0[:, :3, :]
+        feat1 = hs1[:, :3, :]
+        # memory0 = memory0.reshape([batch_size,-1,self.hidden_dim])
+        # memory1 = memory1.reshape([batch_size,-1,self.hidden_dim])
+        
+        # feat0 = torch.cat([feat0,memory0],dim=1)
+        # feat1 = torch.cat([feat1,memory1],dim=1)
+        
         feat0, feat1 = self.transformer_block(feat0, feat1)
 
         feat = torch.cat([feat0.unsqueeze(0), feat0.unsqueeze(0)], dim=0)
-        feat = feat.reshape([batch_size, self.num_image, self.max_num_line, -1])
+
+        feat = feat.reshape([batch_size, self.num_image, self.num_vp, -1])
         feat = rearrange(feat, "b i l c -> b c i l").contiguous()
 
         pooled_feat = self.pool_transformer_output(feat)
@@ -155,23 +160,23 @@ class CuTiLitModule(LightningModule):
                 "pred_view1_vps": pred_view1_vps,
                 }
 
-    # def normalize_preds(self, pred_poses):
-    #     pred_out_se3 = SE3(pred_poses)
-    #     Gs = SE3.IdentityLike(pred_out_se3)
-    #     normalized = pred_out_se3.data[:, :, 3:].norm(dim=-1).unsqueeze(2)
-    #     eps = torch.ones_like(normalized) * .01
-    #     pred_out_se3_new = SE3(torch.clone(pred_out_se3.data))
-    #     pred_out_se3_new.data[:, :, 3:] = pred_out_se3.data[:, :, 3:] / torch.max(normalized, eps)
-    #
-    #     out_Gs = SE3(torch.cat([Gs[:, :1].data, pred_out_se3_new.data[:, 1:]], dim=1))
-    #     return out_Gs
-
     def normalize_preds(self, pred_poses):
-        normalized_rot = pred_poses.data[:, :, 3:].norm(dim=-1, keepdim=True)
-        eps = torch.ones_like(normalized_rot) * .01
-        pred_poses_new = torch.clone(pred_poses)
-        pred_poses_new[:, :, 3:] = pred_poses.data[:, :, 3:] / torch.max(normalized_rot, eps)
-        return pred_poses_new
+        pred_out_se3 = SE3(pred_poses)
+        Gs = SE3.IdentityLike(pred_out_se3)
+        normalized = pred_out_se3.data[:, :, 3:].norm(dim=-1).unsqueeze(2)
+        eps = torch.ones_like(normalized) * .01
+        pred_out_se3_new = SE3(torch.clone(pred_out_se3.data))
+        pred_out_se3_new.data[:, :, 3:] = pred_out_se3.data[:, :, 3:] / torch.max(normalized, eps)
+    
+        out_Gs = SE3(torch.cat([Gs[:, :1].data, pred_out_se3_new.data[:, 1:]], dim=1))
+        return out_Gs
+
+    # def normalize_preds(self, pred_poses):
+    #     normalized_rot = pred_poses.data[:, :, 3:].norm(dim=-1, keepdim=True)
+    #     eps = torch.ones_like(normalized_rot) * .01
+    #     pred_poses_new = torch.clone(pred_poses)
+    #     pred_poses_new[:, :, 3:] = pred_poses.data[:, :, 3:] / torch.max(normalized_rot, eps)
+    #     return pred_poses_new
 
     def eval_camera(self, predictions):
         acc_threshold = {
@@ -221,18 +226,18 @@ class CuTiLitModule(LightningModule):
         pass
 
     def shared_step(self, batch: Any):
-        images, poses, intrinsics, lines, vps, endpoint = batch
-        target_poses = poses
+        images, lines, target = batch
+        target_poses = SE3(target['poses'])
 
-        pred_dict = self.forward(images, lines, endpoint)
+        pred_dict = self.forward(images, lines, target['endpoint'])
         pred_poses = pred_dict["pred_pose"]
 
         loss, loss_dict = self.criterion(target_poses, pred_poses)
 
-        return loss, loss_dict, pred_poses, poses
+        return loss, loss_dict, pred_poses, target_poses
 
     def training_step(self, batch: Any, batch_idx: int):
-        loss, loss_dict, preds, target = self.shared_step(batch)
+        loss, loss_dict, preds, target_pose = self.shared_step(batch)
 
         # update and log metrics
         self.log("train/loss", loss, on_step=False, on_epoch=True, prog_bar=True)
@@ -247,7 +252,7 @@ class CuTiLitModule(LightningModule):
         pass
 
     def validation_step(self, batch: Any, batch_idx: int):
-        loss, loss_dict, preds, target = self.shared_step(batch)
+        loss, loss_dict, preds, target_pose = self.shared_step(batch)
 
         # update and log metrics
         self.log("val/loss", loss, on_step=False, on_epoch=True, prog_bar=True)
@@ -280,10 +285,10 @@ class CuTiLitModule(LightningModule):
         pass
 
     def test_step(self, batch: Any, batch_idx: int):
-        images, poses, intrinsics, lines, vps, endpoint = batch
-        vps = rearrange(vps, "b i l c -> i b l c ").contiguous()
+        images, lines, target = batch
+        vps = rearrange(target['vps'], "b i l c -> i b l c ").contiguous()
 
-        pred_dict = self.forward(images, lines, endpoint)
+        pred_dict = self.forward(images, lines, target['endpoint'])
 
         index0 = self.matcher(pred_dict["pred_view0_vps"], vps[0])
         index1 = self.matcher(pred_dict["pred_view1_vps"], vps[1])
@@ -294,7 +299,7 @@ class CuTiLitModule(LightningModule):
         self.vp_loss0.append(vp_loss0.tolist())
         self.vp_loss1.append(vp_loss1.tolist())
 
-        predictions = self.test_camera(poses, pred_dict["pred_pose"], self.predictions)
+        predictions = self.test_camera(target['poses'], pred_dict["pred_pose"], self.predictions)
 
         return predictions, self.vp_loss0, self.vp_loss1
 

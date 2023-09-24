@@ -1,5 +1,4 @@
-import csv
-import time
+import copy
 
 import numpy as np
 import numpy.linalg as LA
@@ -44,18 +43,6 @@ class RGBDDataset(Dataset):
     @staticmethod
     def image_read(image_file):
         return cv2.imread(image_file)
-
-    def read_line_file(self, filename: str, min_line_length=10):
-        segs = []  # line segments
-
-        with open(filename, "r") as csvfile:
-            csvreader = csv.reader(csvfile)
-            for row in csvreader:
-                segs.append([float(row[0]), float(row[1]), float(row[2]), float(row[3])])
-        segs = np.array(segs, dtype=np.float32)
-        lengths = LA.norm(segs[:, 2:] - segs[:, :2], axis=1)
-        segs = segs[lengths > min_line_length]
-        return segs
 
     def normalize_safe_np(self, v, axis=-1, eps=1e-6):
         de = LA.norm(v, axis=axis, keepdims=True)
@@ -123,13 +110,15 @@ class RGBDDataset(Dataset):
         endpoint.append(lines[1])
         lines[1] = self.segs2lines_np(lines[1])
 
-        images = F.interpolate(images, size=(sizey, sizex))
+        images = F.interpolate(images, size=(sizey, sizex), mode="bilinear")
         lines = np.array(lines)
         vps = np.array(vps)
+        endpoint = np.array(endpoint)
 
         return images, poses, intrinsics, lines, vps, endpoint
 
     def __getitem__(self, index):
+        target = {}
         images_list = self.scene_info["images"][index]
         poses = self.scene_info["poses"][index]
         intrinsics = self.scene_info["intrinsics"][index]
@@ -139,7 +128,8 @@ class RGBDDataset(Dataset):
         images = []
         for i in range(2):
             images.append(self.image_read(images_list[i]))
-
+        org_img0 = images[0]
+        org_img1 = images[1]
         poses = np.stack(poses).astype(np.float32)
         intrinsics = np.stack(intrinsics).astype(np.float32)
 
@@ -149,9 +139,7 @@ class RGBDDataset(Dataset):
 
         poses = torch.from_numpy(poses)
         intrinsics = torch.from_numpy(intrinsics)
-        lines = []
-        for i in range(2):
-            lines.append(self.read_line_file(lines_list[i], 10))
+        lines = copy.deepcopy(lines_list)
 
         vps = []
         for i in range(2):
@@ -162,8 +150,29 @@ class RGBDDataset(Dataset):
         )
         images, poses, intrinsics, lines, vps, endpoint = self.process_geometry(
             images, poses, intrinsics, lines, vps)
-
-        return images, poses, intrinsics, lines, vps, endpoint
+        
+        
+        target['vps'] = (
+            torch.from_numpy(np.ascontiguousarray(vps)).contiguous().float()
+        )
+        target['poses'] = (
+            torch.from_numpy(np.ascontiguousarray(poses)).contiguous().float()
+        )
+        target['endpoint'] = (
+            torch.from_numpy(np.ascontiguousarray(endpoint)).contiguous().float()
+        )
+        target['intrinsics'] = (
+            torch.from_numpy(np.ascontiguousarray(intrinsics)).contiguous().float()
+        )
+        
+        
+        target['org_img0'] = org_img0
+        target['org_img1'] = org_img1
+        target['img_path0'] = images_list[0]
+        target['img_path1'] = images_list[1]
+        
+        return images, lines, target
+        
 
     def __len__(self):
         return len(self.scene_info["images"])

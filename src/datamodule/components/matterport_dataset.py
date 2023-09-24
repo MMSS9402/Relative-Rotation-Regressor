@@ -1,7 +1,10 @@
 import os
 import json
+import csv
+from tqdm import tqdm
 
 import numpy as np
+import numpy.linalg as LA
 
 from src.datamodule.components.base import RGBDDataset
 
@@ -25,6 +28,18 @@ class MatterportDataset(RGBDDataset):
             use_mini_dataset=use_mini_dataset,
         )
 
+    def read_line_file(self, filename: str, min_line_length=10):
+        segs = []  # line segments
+
+        with open(filename, "r") as csvfile:
+            csvreader = csv.reader(csvfile)
+            for row in csvreader:
+                segs.append([float(row[0]), float(row[1]), float(row[2]), float(row[3])])
+        segs = np.array(segs, dtype=np.float32)
+        lengths = LA.norm(segs[:, 2:] - segs[:, :2], axis=1)
+        segs = segs[lengths > min_line_length]
+        return segs
+
     def _build_dataset(self):
         base_pose = np.array([0, 0, 0, 0, 0, 0, 1])
 
@@ -39,7 +54,8 @@ class MatterportDataset(RGBDDataset):
 
         original_basepath = "/Pool1/users/jinlinyi/dataset/mp3d_rpnet_v4_sep20"
 
-        for data in split["data"].values():
+        print("build dataset ...")
+        for data in tqdm(split["data"].values()):
             vps = []
             images = []
             lines = []
@@ -55,7 +71,7 @@ class MatterportDataset(RGBDDataset):
                 vps.append(gt_vps)
 
                 images.append(img_path)
-                lines.append(line_path)
+                lines.append(self.read_line_file(line_path, min_line_length=10))
 
             rel_pose = np.array(data["rel_pose"]["position"] + data["rel_pose"]["rotation"])
 

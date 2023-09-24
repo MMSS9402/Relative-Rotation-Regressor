@@ -40,8 +40,8 @@ pose_regressor_hidden_dim: 256
 pose_size: 7
 
 criterion:
-#  _target_: src.models.components.losses.GeodesicLoss
-  _target_: src.models.components.losses.L1Loss
+#  _target_: src.models.components.losses.GeodesicLoss,src.models.components.losses.L1Loss
+  _target_: src.models.components.losses.GeodesicLoss
   weights:
     translation: 0.0
     rotation: 10.0
@@ -49,11 +49,6 @@ criterion:
 vp_criterion:
   _target_: src.models.components.vp_loss.VpLoss
 
-Rel_criterion:
-  _target_: src.models.components.losses_non_geodesic.RelPoseLoss
-  weights:
-    translation: 10.0
-    rotation: 10.0
 
 test_metric:
   _target_: src.models.components.testfunction.Testcamera
@@ -67,8 +62,8 @@ matcher:
 
 optimizer:
   _target_: torch.optim.AdamW
-  lr: 1e-5
-  weight_decay: 1e-5
+  lr: 1e-4
+  weight_decay: 1e-4
 
 scheduler:
   _target_: torch.optim.lr_scheduler.ReduceLROnPlateau
