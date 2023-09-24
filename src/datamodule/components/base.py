@@ -1,4 +1,5 @@
 import copy
+import csv
 
 import numpy as np
 import numpy.linalg as LA
@@ -43,6 +44,18 @@ class RGBDDataset(Dataset):
     @staticmethod
     def image_read(image_file):
         return cv2.imread(image_file)
+
+    def read_line_file(self, filename: str, min_line_length=10):
+        segs = []  # line segments
+
+        with open(filename, "r") as csvfile:
+            csvreader = csv.reader(csvfile)
+            for row in csvreader:
+                segs.append([float(row[0]), float(row[1]), float(row[2]), float(row[3])])
+        segs = np.array(segs, dtype=np.float32)
+        lengths = LA.norm(segs[:, 2:] - segs[:, :2], axis=1)
+        segs = segs[lengths > min_line_length]
+        return segs
 
     def normalize_safe_np(self, v, axis=-1, eps=1e-6):
         de = LA.norm(v, axis=axis, keepdims=True)
@@ -126,6 +139,7 @@ class RGBDDataset(Dataset):
         vp_list = self.scene_info['vps'][index]
 
         images = []
+        lines = []
         for i in range(2):
             images.append(self.image_read(images_list[i]))
         org_img0 = images[0]
@@ -134,12 +148,11 @@ class RGBDDataset(Dataset):
         intrinsics = np.stack(intrinsics).astype(np.float32)
 
         images = np.stack(images).astype(np.float32) / 255.0
-        images = torch.from_numpy(images).float() # [2,480,640,3] => [img_num,h,w,c]
+        images = torch.from_numpy(images).float()  # [2,480,640,3] => [img_num,h,w,c]
         images = images.permute(0, 3, 1, 2)  # [2,3,480,640] => [img_num,c,h,w]
 
         poses = torch.from_numpy(poses)
         intrinsics = torch.from_numpy(intrinsics)
-        lines = copy.deepcopy(lines_list)
 
         vps = []
         for i in range(2):
