@@ -107,10 +107,11 @@ class CuTiLitModule(LightningModule):
         self.optimizer = optimizer
         self.scheduler = scheduler
 
-    def forward(self, images: torch.Tensor, lines: torch.Tensor, endpoint: torch.Tensor):
-        endpoint[0] = torch.tensor(endpoint[0], dtype=torch.float32)
-        endpoint[1] = torch.tensor(endpoint[1], dtype=torch.float32)
-
+    def forward(self, images: torch.Tensor, lines: torch.Tensor, target):
+        endpoint = target['endpoint']
+        vps = rearrange(target['vps'], "b i l c -> i b l c ").contiguous()
+        batch_size = vps.shape[1]
+        
         with torch.no_grad():
             # [bs, line_num, hidden_dim]
             hs0, memory0, pred_view0_vp0, pred_view0_vp1, pred_view0_vp2 = self.ctrlc(
@@ -126,24 +127,32 @@ class CuTiLitModule(LightningModule):
         pred_view1_vps = torch.cat([pred_view0_vp0.unsqueeze(1),
                                     pred_view0_vp1.unsqueeze(1),
                                     pred_view0_vp2.unsqueeze(1)], dim=1)
+        
+        index0 = self.matcher(pred_view0_vps, vps[0])
+        index1 = self.matcher(pred_view1_vps, vps[1])
+        
+        _,tgt_idx0 = self._get_tgt_permutation_idx(index0)
+        
+        _,tgt_idx1 = self._get_tgt_permutation_idx(index1)
+        
+        tgt_idx0 = tgt_idx0.unsqueeze(0).reshape([batch_size,self.num_vp])
+        tgt_idx1 = tgt_idx1.unsqueeze(0).reshape([batch_size,self.num_vp])
+        
+        vp0_pos = self.positional_encoding(self.hidden_dim,tgt_idx0).cuda()
+        vp1_pos = self.positional_encoding(self.hidden_dim,tgt_idx1).cuda()
+
         # using last decoder layer's feature
         hs0 = hs0[-1]  # [b x n x c]
         hs1 = hs1[-1]
 
-        batch_size = hs0.shape[0]
-
         hs0[:, 3:, :] = hs0[:, 3:, :] + self.image_idx_embedding.weight[0] + self.line_idx_embedding.weight
         hs1[:, 3:, :] = hs1[:, 3:, :] + self.image_idx_embedding.weight[1] + self.line_idx_embedding.weight
 
-        # feat0 = torch.cat([hs0 ], dim=1)
-        # feat1 = torch.cat([hs1 ], dim=1)
         feat0 = hs0[:, :3, :]
         feat1 = hs1[:, :3, :]
-        # memory0 = memory0.reshape([batch_size,-1,self.hidden_dim])
-        # memory1 = memory1.reshape([batch_size,-1,self.hidden_dim])
         
-        # feat0 = torch.cat([feat0,memory0],dim=1)
-        # feat1 = torch.cat([feat1,memory1],dim=1)
+        feat0 = feat0 + vp0_pos + self.image_idx_embedding.weight[0]
+        feat1 = feat1 + vp1_pos + self.image_idx_embedding.weight[1]
         
         feat0, feat1 = self.transformer_block(feat0, feat1)
 
@@ -170,6 +179,25 @@ class CuTiLitModule(LightningModule):
     
         out_Gs = SE3(torch.cat([Gs[:, :1].data, pred_out_se3_new.data[:, 1:]], dim=1))
         return out_Gs
+    
+    def positional_encoding(self,d_model, pos):
+        pos_enc = torch.zeros((pos.shape[0], pos.shape[1], d_model))
+        for i in range(0, d_model, 2):
+            pos_enc[:, :, i] = torch.sin(pos / 10000 ** (2 * i / d_model))
+            pos_enc[:, :, i + 1] = torch.cos(pos / 10000 ** (2 * i / d_model))
+        return pos_enc
+    
+    def _get_src_permutation_idx(self, indices):
+        # permute predictions following indices
+        batch_idx = torch.cat([torch.full_like(src, i) for i, (src, _) in enumerate(indices)])
+        src_idx = torch.cat([src for (src, _) in indices])
+        return batch_idx, src_idx
+
+    def _get_tgt_permutation_idx(self, indices):
+        # permute targets following indices
+        batch_idx = torch.cat([torch.full_like(tgt, i) for i, (_, tgt) in enumerate(indices)])
+        tgt_idx = torch.cat([tgt for (_, tgt) in indices])
+        return batch_idx, tgt_idx
 
     # def normalize_preds(self, pred_poses):
     #     normalized_rot = pred_poses.data[:, :, 3:].norm(dim=-1, keepdim=True)
@@ -229,7 +257,7 @@ class CuTiLitModule(LightningModule):
         images, lines, target = batch
         target_poses = SE3(target['poses'])
 
-        pred_dict = self.forward(images, lines, target['endpoint'])
+        pred_dict = self.forward(images, lines, target)
         pred_poses = pred_dict["pred_pose"]
 
         loss, loss_dict = self.criterion(target_poses, pred_poses)
@@ -288,7 +316,7 @@ class CuTiLitModule(LightningModule):
         images, lines, target = batch
         vps = rearrange(target['vps'], "b i l c -> i b l c ").contiguous()
 
-        pred_dict = self.forward(images, lines, target['endpoint'])
+        pred_dict = self.forward(images, lines, target)
 
         index0 = self.matcher(pred_dict["pred_view0_vps"], vps[0])
         index1 = self.matcher(pred_dict["pred_view1_vps"], vps[1])

@@ -139,20 +139,22 @@ class RGBDDataset(Dataset):
         vp_list = self.scene_info['vps'][index]
 
         images = []
-        lines = []
         for i in range(2):
             images.append(self.image_read(images_list[i]))
+            
         org_img0 = images[0]
         org_img1 = images[1]
+
         poses = np.stack(poses).astype(np.float32)
         intrinsics = np.stack(intrinsics).astype(np.float32)
 
         images = np.stack(images).astype(np.float32) / 255.0
-        images = torch.from_numpy(images).float()  # [2,480,640,3] => [img_num,h,w,c]
+        images = torch.from_numpy(images).float() # [2,480,640,3] => [img_num,h,w,c]
         images = images.permute(0, 3, 1, 2)  # [2,3,480,640] => [img_num,c,h,w]
 
         poses = torch.from_numpy(poses)
         intrinsics = torch.from_numpy(intrinsics)
+        lines = copy.deepcopy(lines_list)
 
         vps = []
         for i in range(2):
