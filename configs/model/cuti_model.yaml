@@ -19,7 +19,7 @@ ctrlc:
       NUM_QUERIES: 3
       PRE_NORM: False
 
-ctrlc_checkpoint_path: "/home/kmuvcl/source/CTRL-C/loco/checkpoint0071.pth"
+ctrlc_checkpoint_path: "/home/kmuvcl/source/CTRL-C/logs/checkpoint0099.pth"
 
 pos_encoder:
   _target_: src.models.components.position_encoding.PositionEncodingSine1D
@@ -30,7 +30,7 @@ transformer:
   _target_: src.models.components.transformer.LocalFeatureTransformer
   d_model: 256 #512
   nhead: 8
-  layer_types: ["self", "cross"]
+  layer_types: ["self", "cross", "self", "cross", "self", "cross"]
   attention: "linear"
 
 max_num_line: 512
@@ -41,7 +41,7 @@ pose_size: 7
 
 criterion:
 #  _target_: src.models.components.losses.GeodesicLoss,src.models.components.losses.L1Loss
-  _target_: src.models.components.losses.GeodesicLoss
+  _target_: src.models.components.losses.L1Loss
   weights:
     translation: 0.0
     rotation: 10.0

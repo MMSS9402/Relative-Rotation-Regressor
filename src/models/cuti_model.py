@@ -86,7 +86,7 @@ class CuTiLitModule(LightningModule):
         )
 
         pose_regressor_input_dim = int(self.num_image * pool_channels[1] * (self.num_vp))
-
+        rotation_regressor_dim = self.num_vp*self.hidden_dim
         self.pose_regressor = nn.Sequential(
             nn.Linear(pose_regressor_input_dim, pose_regressor_hidden_dim),
             nn.ReLU(),
@@ -94,6 +94,20 @@ class CuTiLitModule(LightningModule):
             nn.ReLU(),
             nn.Linear(pose_regressor_hidden_dim, self.num_image * pose_size),
             nn.Unflatten(1, (self.num_image, pose_size)),
+        )
+        self.rotation_regressor = nn.Sequential(
+            nn.Linear(rotation_regressor_dim, rotation_regressor_dim),
+            nn.ReLU(),
+            nn.Linear(rotation_regressor_dim, rotation_regressor_dim),
+            nn.ReLU(),
+            nn.Linear(rotation_regressor_dim, 4),
+        )
+        self.translation_regressor = nn.Sequential(
+            nn.Linear(rotation_regressor_dim, rotation_regressor_dim),
+            nn.ReLU(),
+            nn.Linear(rotation_regressor_dim, rotation_regressor_dim),
+            nn.ReLU(),
+            nn.Linear(rotation_regressor_dim, 3),
         )
 
         self.query_embed = nn.Embedding(2, hidden_dim)
@@ -155,30 +169,37 @@ class CuTiLitModule(LightningModule):
         feat1 = feat1 + vp1_pos + self.image_idx_embedding.weight[1]
         
         feat0, feat1 = self.transformer_block(feat0, feat1)
+        feat = torch.cat([feat0.unsqueeze(1), feat0.unsqueeze(1)], dim=1)
+        
+        R = self.rotation_regressor(feat.reshape([batch_size,2,-1]))
+        T = self.translation_regressor(feat.reshape([batch_size,2,-1]))
+        
+        pose_preds = torch.cat([T,R],dim=2)
+        
 
-        feat = torch.cat([feat0.unsqueeze(0), feat0.unsqueeze(0)], dim=0)
+        # feat = torch.cat([feat0.unsqueeze(0), feat0.unsqueeze(0)], dim=0)
 
-        feat = feat.reshape([batch_size, self.num_image, self.num_vp, -1])
-        feat = rearrange(feat, "b i l c -> b c i l").contiguous()
+        # feat = feat.reshape([batch_size, self.num_image, self.num_vp, -1])
+        # feat = rearrange(feat, "b i l c -> b c i l").contiguous()
 
-        pooled_feat = self.pool_transformer_output(feat)
-        pose_preds = self.pose_regressor(pooled_feat.reshape([batch_size, -1]))
+        # pooled_feat = self.pool_transformer_output(feat)
+        # pose_preds = self.pose_regressor(pooled_feat.reshape([batch_size, -1]))
 
         return {"pred_pose": self.normalize_preds(pose_preds),
                 "pred_view0_vps": pred_view0_vps,
                 "pred_view1_vps": pred_view1_vps,
                 }
 
-    def normalize_preds(self, pred_poses):
-        pred_out_se3 = SE3(pred_poses)
-        Gs = SE3.IdentityLike(pred_out_se3)
-        normalized = pred_out_se3.data[:, :, 3:].norm(dim=-1).unsqueeze(2)
-        eps = torch.ones_like(normalized) * .01
-        pred_out_se3_new = SE3(torch.clone(pred_out_se3.data))
-        pred_out_se3_new.data[:, :, 3:] = pred_out_se3.data[:, :, 3:] / torch.max(normalized, eps)
+    # def normalize_preds(self, pred_poses):
+    #     pred_out_se3 = SE3(pred_poses)
+    #     Gs = SE3.IdentityLike(pred_out_se3)
+    #     normalized = pred_out_se3.data[:, :, 3:].norm(dim=-1).unsqueeze(2)
+    #     eps = torch.ones_like(normalized) * .01
+    #     pred_out_se3_new = SE3(torch.clone(pred_out_se3.data))
+    #     pred_out_se3_new.data[:, :, 3:] = pred_out_se3.data[:, :, 3:] / torch.max(normalized, eps)
     
-        out_Gs = SE3(torch.cat([Gs[:, :1].data, pred_out_se3_new.data[:, 1:]], dim=1))
-        return out_Gs
+    #     out_Gs = SE3(torch.cat([Gs[:, :1].data, pred_out_se3_new.data[:, 1:]], dim=1))
+    #     return out_Gs
     
     def positional_encoding(self,d_model, pos):
         pos_enc = torch.zeros((pos.shape[0], pos.shape[1], d_model))
@@ -199,12 +220,12 @@ class CuTiLitModule(LightningModule):
         tgt_idx = torch.cat([tgt for (_, tgt) in indices])
         return batch_idx, tgt_idx
 
-    # def normalize_preds(self, pred_poses):
-    #     normalized_rot = pred_poses.data[:, :, 3:].norm(dim=-1, keepdim=True)
-    #     eps = torch.ones_like(normalized_rot) * .01
-    #     pred_poses_new = torch.clone(pred_poses)
-    #     pred_poses_new[:, :, 3:] = pred_poses.data[:, :, 3:] / torch.max(normalized_rot, eps)
-    #     return pred_poses_new
+    def normalize_preds(self, pred_poses):
+        normalized_rot = pred_poses.data[:, :, 3:].norm(dim=-1, keepdim=True)
+        eps = torch.ones_like(normalized_rot) * .01
+        pred_poses_new = torch.clone(pred_poses)
+        pred_poses_new[:, :, 3:] = pred_poses.data[:, :, 3:] / torch.max(normalized_rot, eps)
+        return pred_poses_new
 
     def eval_camera(self, predictions):
         acc_threshold = {
@@ -255,7 +276,8 @@ class CuTiLitModule(LightningModule):
 
     def shared_step(self, batch: Any):
         images, lines, target = batch
-        target_poses = SE3(target['poses'])
+        # target_poses = SE3(target['poses'])
+        target_poses = target['poses']
 
         pred_dict = self.forward(images, lines, target)
         pred_poses = pred_dict["pred_pose"]
