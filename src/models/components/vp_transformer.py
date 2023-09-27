@@ -117,10 +117,7 @@ class VPTransformer(nn.Module):
         assert self.d_model == feat0.size(2), "the feature number of src and transformer must be equal"
 
         for layer, layer_type in zip(self.layers, self.layer_types):
-            if layer_type == 'self':
-                feat0 = layer(feat0, feat0, mask0, mask0, embedding0, embedding0)
-                feat1 = layer(feat1, feat1, mask1, mask1, embedding1, embedding1)
-            elif layer_type == 'cross':
+            if layer_type == 'vpcross':
                 bi_feat0 = layer(feat0, feat1, mask0, mask1, embedding0, embedding1)
                 bi_feat1 = layer(feat1, feat0, mask1, mask0, embedding1, embedding0)
             else:

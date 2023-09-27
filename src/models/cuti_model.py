@@ -4,6 +4,8 @@ import os
 import time
 
 import torch.nn.functional as F
+import torch.nn as nn
+import torch.nn.init as init
 
 import numpy as np
 import hydra.utils
@@ -60,7 +62,9 @@ class CuTiLitModule(LightningModule):
         self.vp_loss0 = []
         self.vp_loss1 = []
         self.ctrlc: GPTran = build_ctrlc(ctrlc)
+        
         self.ctrlc.load_state_dict(ctrlc_checkpoint["model"], strict=False)
+        
         self.ctrlc.requires_grad_(False)
         self.ctrlc.eval()
 
@@ -80,14 +84,12 @@ class CuTiLitModule(LightningModule):
         self.transformer_block = hydra.utils.instantiate(transformer)
         self.vptransformer_block = hydra.utils.instantiate(vptransformer)
 
-        self.pool_transformer_output = nn.Sequential(
-            nn.Conv2d(hidden_dim, pool_channels[0], kernel_size=1, bias=False),
-            nn.BatchNorm2d(pool_channels[0]),
-            nn.ReLU(),
-            nn.Conv2d(pool_channels[0], pool_channels[1], kernel_size=1, bias=False),
-            nn.BatchNorm2d(pool_channels[1])
-        )
-        in_channels = int(self.hidden_dim/self.num_head)
+        self.encoder_layer = nn.TransformerEncoderLayer(d_model=2*self.hidden_dim, nhead=self.num_head)
+        self.transformer_encoder = nn.TransformerEncoder(self.encoder_layer, num_layers=3)
+
+        translation_regressor_dim = 15*20*2
+        rotation_regressor_dim =  15*20*2
+        in_channels = int(self.max_num_line + self.num_vp)
         self.rotation_conv = nn.Sequential(
             nn.Conv1d(in_channels, in_channels, kernel_size=1, stride=1, padding=0, bias=False),
             nn.ReLU(),
@@ -95,18 +97,13 @@ class CuTiLitModule(LightningModule):
             nn.ReLU(),
             nn.Conv1d(in_channels, 1, kernel_size=1, stride=1, padding=0, bias=False),
         )
-
-        pose_regressor_input_dim = int(self.num_image * pool_channels[1] * (self.num_vp))
-
-        self.pose_regressor = nn.Sequential(
-            nn.Linear(pose_regressor_input_dim, pose_regressor_hidden_dim),
+        self.translation_regressor = nn.Sequential(
+            nn.Linear(translation_regressor_dim, translation_regressor_dim),
             nn.ReLU(),
-            nn.Linear(pose_regressor_hidden_dim, pose_regressor_hidden_dim),
+            nn.Linear(translation_regressor_dim, translation_regressor_dim),
             nn.ReLU(),
-            nn.Linear(pose_regressor_hidden_dim, self.num_image * pose_size),
-            nn.Unflatten(1, (self.num_image, pose_size)),
+            nn.Linear(translation_regressor_dim, 3),
         )
-        rotation_regressor_dim = self.num_vp*self.hidden_dim
         self.rotation_regressor = nn.Sequential(
             nn.Linear(rotation_regressor_dim, rotation_regressor_dim),
             nn.ReLU(),
@@ -114,13 +111,16 @@ class CuTiLitModule(LightningModule):
             nn.ReLU(),
             nn.Linear(rotation_regressor_dim, 4),
         )
-        self.translation_regressor = nn.Sequential(
-            nn.Linear(rotation_regressor_dim, rotation_regressor_dim),
+
+        self.image_conv = nn.Sequential(
+            nn.Conv2d(self.hidden_dim, self.hidden_dim, kernel_size=1, stride=1, padding=0, bias=False),
             nn.ReLU(),
-            nn.Linear(rotation_regressor_dim, rotation_regressor_dim),
+            nn.Conv2d(self.hidden_dim, self.hidden_dim, kernel_size=1, stride=1, padding=0, bias=False),
             nn.ReLU(),
-            nn.Linear(rotation_regressor_dim, 3),
-        ) 
+            nn.Conv2d(self.hidden_dim, 1, kernel_size=1, stride=1, padding=0, bias=False),
+        )
+
+        self.maxpool = nn.MaxPool1d(2,1)
 
         self.query_embed = nn.Embedding(2, hidden_dim)
 
@@ -132,6 +132,7 @@ class CuTiLitModule(LightningModule):
 
         self.optimizer = optimizer
         self.scheduler = scheduler
+        # self.automatic_optimization = False
 
     def forward(self, images: torch.Tensor, lines: torch.Tensor, target):
         endpoint = target['endpoint']
@@ -158,12 +159,14 @@ class CuTiLitModule(LightningModule):
         index1 = self.matcher(pred_view1_vps, vps[1])
         
         _,tgt_idx0 = self._get_tgt_permutation_idx(index0)
-        
         _,tgt_idx1 = self._get_tgt_permutation_idx(index1)
         
         tgt_idx0 = tgt_idx0.unsqueeze(0).reshape([batch_size,self.num_vp])
         tgt_idx1 = tgt_idx1.unsqueeze(0).reshape([batch_size,self.num_vp])
-        
+
+        # vp_one_hot0 = F.one_hot(tgt_idx0,num_classes=256).cuda()
+        # vp_one_hot1 = F.one_hot(tgt_idx1,num_classes=256).cuda()
+
         vp0_pos = self.positional_encoding(self.hidden_dim,tgt_idx0).cuda()
         vp1_pos = self.positional_encoding(self.hidden_dim,tgt_idx1).cuda()
 
@@ -171,35 +174,45 @@ class CuTiLitModule(LightningModule):
         hs0 = hs0[-1]  # [b x n x c]
         hs1 = hs1[-1]
 
-        hs0[:, 3:, :] = hs0[:, 3:, :] + self.image_idx_embedding.weight[0] + self.line_idx_embedding.weight
-        hs1[:, 3:, :] = hs1[:, 3:, :] + self.image_idx_embedding.weight[1] + self.line_idx_embedding.weight
+        hs0[:, 3:, :] = hs0[:, 3:, :] + self.line_idx_embedding.weight
+        hs1[:, 3:, :] = hs1[:, 3:, :] + self.line_idx_embedding.weight
 
-        feat0 = hs0[:, :3, :]
-        feat1 = hs1[:, :3, :]
+        feat0 = hs0
+        feat1 = hs1
+
+        feat0 = feat0 + self.image_idx_embedding.weight[0] #+ vp0_pos # + vp_one_hot0 
+        feat1 = feat1 + self.image_idx_embedding.weight[1] #+ vp1_pos # + vp_one_hot1
         
-        feat0 = feat0 + vp0_pos + self.image_idx_embedding.weight[0]
-        feat1 = feat1 + vp1_pos + self.image_idx_embedding.weight[1]
+        memory0 = memory0.reshape([batch_size,-1,self.hidden_dim])
+        memory1 = memory1.reshape([batch_size,-1,self.hidden_dim])
+
+
+
+        # # 여기부터
+        # reshape_feat0 = torch.zeros_like(feat0)
+        # reshape_feat1 = torch.zeros_like(feat1)
+        # for i in range(feat0.size(0)):
+        #     reshape_feat0[i] = feat0[i, tgt_idx0[3*i:3*(i+1)]]
+        #     reshape_feat1[i] = feat1[i, tgt_idx1[3*i:3*(i+1)]]
+        # feat = torch.cat([reshape_feat0,reshape_feat1],dim=2)
+        # feat = self.transformer_encoder(feat)
         
-        feat0, feat1 = self.transformer_block(feat0, feat1)
+        # feat0, feat1 = self.transformer_block(feat0, feat1)
+        memory0, memory1 = self.transformer_block(memory0, memory1)
+
+
+        memory0 = memory0.reshape([batch_size,self.hidden_dim,15,20])
+        memory1 = memory1.reshape([batch_size,self.hidden_dim,15,20])
+        memory0 = self.image_conv(memory0)
+        memory1 = self.image_conv(memory1)
+        memory = torch.cat([memory0,memory1],dim=1)
+
         # feat0, feat1 = self.vptransformer_block(feat0,feat1)
-
-
-        feat = torch.cat([feat0.unsqueeze(1), feat1.unsqueeze(1)], dim=1)
-
-        R = self.rotation_regressor(feat.reshape([batch_size,2,-1]))
-        T = self.translation_regressor(feat.reshape([batch_size,2,-1]))
         
-        pose_preds = torch.cat([T,R],dim=2)
-
+        R = self.rotation_regressor(memory.reshape([batch_size,-1]))
+        T = self.translation_regressor(memory.reshape([batch_size,-1]))
         
-
-        # feat = torch.cat([feat0.unsqueeze(0), feat1.unsqueeze(0)], dim=0)
-
-        # feat = feat.reshape([batch_size, self.num_image, self.num_vp, -1])
-        # feat = rearrange(feat, "b i l c -> b c i l").contiguous()
-
-        # pooled_feat = self.pool_transformer_output(feat)
-        # pose_preds = self.pose_regressor(pooled_feat.reshape([batch_size, -1]))
+        pose_preds = torch.cat([T,R],dim=1)
 
         return {"pred_pose": self.normalize_preds(pose_preds),
                 "pred_view0_vps": pred_view0_vps,
@@ -237,11 +250,91 @@ class CuTiLitModule(LightningModule):
         return batch_idx, tgt_idx
 
     def normalize_preds(self, pred_poses):
-        normalized_rot = pred_poses.data[:, :, 3:].norm(dim=-1, keepdim=True)
+        pred_quaternion = pred_poses[:,3:]
+        normalized_rot = torch.norm(pred_quaternion,dim=1).unsqueeze(1)
         eps = torch.ones_like(normalized_rot) * .01
-        pred_poses_new = torch.clone(pred_poses)
-        pred_poses_new[:, :, 3:] = pred_poses.data[:, :, 3:] / torch.max(normalized_rot, eps)
-        return pred_poses_new
+        normalize_quaternion = pred_quaternion/normalized_rot   
+        # pred_poses[:,3:] = normalize_quaternion
+        # normalized_rot = pred_poses.data[:,3:].norm(dim=-1, keepdim=True)
+        # eps = torch.ones_like(normalized_rot) * .01
+        # pred_poses_new = torch.clone(pred_poses)
+        # pred_poses_new[:, 3:] = pred_poses.data[:, 3:] / torch.max(normalized_rot, eps)
+
+
+        return torch.cat([pred_poses[:, :3], normalize_quaternion], dim=1) #pred_poses_new
+
+
+    def _sqrt_positive_part(self,x: torch.Tensor) -> torch.Tensor:
+        """
+        Returns torch.sqrt(torch.max(0, x))
+        but with a zero subgradient where x is 0.
+        """
+        ret = torch.zeros_like(x)
+        positive_mask = x > 0
+        ret[positive_mask] = torch.sqrt(x[positive_mask])
+        return ret
+
+
+    def matrix_to_quaternion(self,matrix: torch.Tensor) -> torch.Tensor:
+        """
+        Convert rotations given as rotation matrices to quaternions.
+
+        Args:
+            matrix: Rotation matrices as tensor of shape (..., 3, 3).
+
+        Returns:
+            quaternions with real part first, as tensor of shape (..., 4).
+        """
+        if matrix.size(-1) != 3 or matrix.size(-2) != 3:
+            raise ValueError(f"Invalid rotation matrix shape {matrix.shape}.")
+
+        batch_dim = matrix.shape[:-2]
+        m00, m01, m02, m10, m11, m12, m20, m21, m22 = torch.unbind(
+            matrix.reshape(batch_dim + (9,)), dim=-1
+        )
+
+        q_abs = self._sqrt_positive_part(
+            torch.stack(
+                [
+                    1.0 + m00 + m11 + m22,
+                    1.0 + m00 - m11 - m22,
+                    1.0 - m00 + m11 - m22,
+                    1.0 - m00 - m11 + m22,
+                ],
+                dim=-1,
+            )
+        )
+
+        # we produce the desired quaternion multiplied by each of r, i, j, k
+        quat_by_rijk = torch.stack(
+            [
+                # pyre-fixme[58]: `**` is not supported for operand types `Tensor` and
+                #  `int`.
+                torch.stack([q_abs[..., 0] ** 2, m21 - m12, m02 - m20, m10 - m01], dim=-1),
+                # pyre-fixme[58]: `**` is not supported for operand types `Tensor` and
+                #  `int`.
+                torch.stack([m21 - m12, q_abs[..., 1] ** 2, m10 + m01, m02 + m20], dim=-1),
+                # pyre-fixme[58]: `**` is not supported for operand types `Tensor` and
+                #  `int`.
+                torch.stack([m02 - m20, m10 + m01, q_abs[..., 2] ** 2, m12 + m21], dim=-1),
+                # pyre-fixme[58]: `**` is not supported for operand types `Tensor` and
+                #  `int`.
+                torch.stack([m10 - m01, m20 + m02, m21 + m12, q_abs[..., 3] ** 2], dim=-1),
+            ],
+            dim=-2,
+        )
+
+        # We floor here at 0.1 but the exact level is not important; if q_abs is small,
+        # the candidate won't be picked.
+        flr = torch.tensor(0.1).to(dtype=q_abs.dtype, device=q_abs.device)
+        quat_candidates = quat_by_rijk / (2.0 * q_abs[..., None].max(flr))
+
+        # if not for numerical problems, quat_candidates[i] should be same (up to a sign),
+        # forall i; we pick the best-conditioned one (with the largest denominator)
+
+        return quat_candidates[
+            F.one_hot(q_abs.argmax(dim=-1), num_classes=4) > 0.5, :
+        ].reshape(batch_dim + (4,))
 
     def eval_camera(self, predictions):
         acc_threshold = {
@@ -253,7 +346,7 @@ class CuTiLitModule(LightningModule):
 
         gt_tran = np.vstack(predictions["camera"]["gts"]["tran"])
         gt_rot = np.vstack(predictions["camera"]["gts"]["rot"])
-
+        
         top1_error = {
             "tran": np.linalg.norm(gt_tran - pred_tran, axis=1),
             "rot": 2 * np.arccos(
@@ -296,6 +389,15 @@ class CuTiLitModule(LightningModule):
         target_poses = target['poses']
 
         pred_dict = self.forward(images, lines, target)
+
+        vps = rearrange(target['vps'], "b i l c -> i b l c ").contiguous()
+        
+        index0 = self.matcher(pred_dict["pred_view0_vps"], vps[0])
+        index1 = self.matcher(pred_dict["pred_view1_vps"], vps[1])
+
+        vp_loss0 = self.vp_criterion(pred_dict["pred_view0_vps"], vps[0], index0)
+        vp_loss1 = self.vp_criterion(pred_dict["pred_view1_vps"], vps[1], index1)
+
         pred_poses = pred_dict["pred_pose"]
 
         loss, loss_dict = self.criterion(target_poses, pred_poses)
@@ -304,18 +406,29 @@ class CuTiLitModule(LightningModule):
 
     def training_step(self, batch: Any, batch_idx: int):
         loss, loss_dict, preds, target_pose = self.shared_step(batch)
-
         # update and log metrics
         self.log("train/loss", loss, on_step=False, on_epoch=True, prog_bar=True)
         self.log("train/loss_tr", loss_dict["loss_tr"], on_step=False, on_epoch=True, prog_bar=True)
-        self.log("train/loss_rot", loss_dict["loss_rot"], on_step=False, on_epoch=True, prog_bar=True)
+        # self.log("train/loss_rot", loss_dict["loss_rot"], on_step=False, on_epoch=True, prog_bar=True)
+        # self.log("train/loss_vp0", loss_dict["loss_vp0"], on_step=False, on_epoch=True, prog_bar=True)
+        # self.log("train/loss_vp1", loss_dict["loss_vp1"], on_step=False, on_epoch=True, prog_bar=True)
         # self.log("train/acc", acc, on_step=False, on_epoch=True, prog_bar=True)
+        # self.manual_backward(loss)
+        # # loss.backward()
+        # for name, param in self.named_parameters():
+        #     if param.requires_grad:
+        #         print(name,param.grad)
 
+        # optimizer = hydra.utils.instantiate(self.optimizer, params=self.parameters())
+        # optimizer.step()
+        # optimizer.zero_grad()
         # return loss or backpropagation will fail
         return loss
 
     def train_epoch_end(self, outputs: List[Any]):
-        pass
+        for name, param in self.named_parameters():
+            if param.requires_grad:
+                print(name,param.grad)
 
     def validation_step(self, batch: Any, batch_idx: int):
         loss, loss_dict, preds, target_pose = self.shared_step(batch)

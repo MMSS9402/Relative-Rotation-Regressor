@@ -82,7 +82,7 @@ class MatterportDataset(RGBDDataset):
             rel_pose[6], rel_pose[3] = rel_pose[3], rel_pose[6]
 
             # normalize quaternions to have positive "W"
-            if rel_pose[6] < 0:
+            if rel_pose[6] < 0: #6
                 rel_pose[3:] *= -1
             poses = np.vstack([base_pose, rel_pose])
 

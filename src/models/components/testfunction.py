@@ -32,7 +32,8 @@ class Testcamera(Callable):
         predictions = predictions
         
         preds = pose_preds.data.cpu().numpy()
-        preds = preds[:,1,:]
+        # preds = preds[:,1,:]
+        preds = preds
         pr_copy = np.copy(preds)
         
         preds[:,3] = pr_copy[:,6] # swap 3 & 6, we used W last; want W first in quat

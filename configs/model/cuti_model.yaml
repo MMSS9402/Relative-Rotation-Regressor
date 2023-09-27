@@ -37,7 +37,7 @@ vptransformer:
   _target_: src.models.components.vp_transformer.VPTransformer
   d_model: 256 #512
   nhead: 8
-  layer_types: ["cross"]
+  layer_types: ["vpcross"]
   attention: "bilinear"
 
 
@@ -53,6 +53,7 @@ criterion:
   weights:
     translation: 0.0
     rotation: 10.0
+    vp: 10.0
 
 vp_criterion:
   _target_: src.models.components.vp_loss.VpLoss
@@ -69,9 +70,9 @@ matcher:
   
 
 optimizer:
-  _target_: torch.optim.AdamW
-  lr: 1e-4
-  weight_decay: 1e-4
+  _target_: torch.optim.Adam
+  lr: 1e-2
+  weight_decay: 1e-3
 
 scheduler:
   _target_: torch.optim.lr_scheduler.ReduceLROnPlateau

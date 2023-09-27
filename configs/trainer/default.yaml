@@ -4,9 +4,9 @@ _target_: pytorch_lightning.Trainer
 gpus: 1
 
 min_epochs: 20
-max_epochs: 25
+max_epochs: 100
 
 weights_summary: null
 progress_bar_refresh_rate: 5
 resume_from_checkpoint: null
-gradient_clip_val: 2.5
+# gradient_clip_val: 2.5
