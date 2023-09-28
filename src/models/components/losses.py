@@ -37,7 +37,7 @@ class L1Loss(Callable):
         self.weights_vp = weights.vp
 
     # def __call__(self, Ps, Gs):
-    def __call__(self, target, pred,vp_loss0=None,vp_loss1=None):
+    def __call__(self, target, pred, vp_loss0=None,vp_loss1=None):
         d_target = target[:, 1]
         # d_pred = pred[:, 1]
         d_pred = pred
