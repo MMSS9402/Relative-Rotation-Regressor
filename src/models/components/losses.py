@@ -2,18 +2,14 @@ from typing import Callable
 import torch
 
 
-class GeodesicLoss(Callable):
+class PoseL1Loss(Callable):
     def __init__(self, weights):
         self.weights_tr = weights.translation
         self.weights_rot = weights.rotation
 
-    def __call__(self, Ps, Gs):
-        ii, jj = torch.tensor([0, 1]), torch.tensor([1, 0])
+    def __call__(self, pred, target):
 
-        dP = Ps[:, jj] * Ps[:, ii].inv()
-        dG = Gs[0][:, jj] * Gs[0][:, ii].inv()
-
-        d = (dG * dP.inv()).log()
+        diff = target -  pred
 
         tau, phi = d.split([3, 3], dim=-1)
 

@@ -31,4 +31,3 @@ scikit-learn    # used in some callbacks
 seaborn         # used in some callbacks
 opencv-python   # image save, load, processing
 einops          #
-#git+https://github.com/princeton-vl/lietorch.git
