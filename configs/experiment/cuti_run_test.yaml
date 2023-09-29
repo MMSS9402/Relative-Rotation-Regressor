@@ -4,24 +4,17 @@
 # python train.py experiment=example
 
 defaults:
-  - override /callbacks: none.yaml
-  - override /trainer: default.yaml
+  - override /data: matterport.yaml
+  - override /model: cuti.yaml
+  - override /trainer: gpu.yaml
 
 # all parameters below will be merged with parameters from default configurations set above
 # this allows you to overwrite only specified parameters
-task_name: "train_cuti_matterport"
 
-tags: ["cuti", "matterport", "train_test"]
+tags: ["cuti", "matterport"]
 
 seed: 12345
 
 trainer:
-  min_epochs: 1
-  max_epochs: 2
-
-  gpus: 1
-
-datamodule:
-  dataset:
-    use_mini_dataset: true
-    data_path: "/data/chop-private_164/CuTi/small_data"
+  min_epochs: 0
+  max_epochs: 20

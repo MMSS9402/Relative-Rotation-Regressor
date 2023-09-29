@@ -8,13 +8,12 @@ class PoseL1Loss(Callable):
         self.weights_rot = weights.rotation
 
     def __call__(self, pred, target):
+        diff = torch.abs(target - pred)
 
-        diff = target -  pred
+        d_tr, d_rot = diff.split([3, 4], dim=-1)
 
-        tau, phi = d.split([3, 3], dim=-1)
-
-        loss_tr = tau.norm(dim=-1).mean()
-        loss_rot = phi.norm(dim=-1).mean()
+        loss_tr = d_tr.norm(dim=-1).mean()
+        loss_rot = d_rot.norm(dim=-1).mean()
         loss = self.weights_tr * loss_tr + self.weights_rot * loss_rot
         loss_dict = {
             "loss_tr": loss_tr,

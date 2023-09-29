@@ -19,7 +19,8 @@ ctrlc:
       NUM_QUERIES: 3
       PRE_NORM: False
 
-ctrlc_checkpoint_path: "/home/kmuvcl/source/oldCuTi/CuTi/checkpoint/checkpoint0099.pth"
+#ctrlc_checkpoint_path: "/home/kmuvcl/source/oldCuTi/CuTi/checkpoint/checkpoint0099.pth"
+ctrlc_checkpoint_path: "/data/chop-private_164/CuTi/ckpt/checkpoint0099.pth"
 
 pos_encoder:
   _target_: src.models.components.position_encoding.PositionEncodingSine1D
@@ -40,7 +41,7 @@ pose_regressor_hidden_dim: 256
 pose_size: 7
 
 criterion:
-  _target_: src.models.components.losses.GeodesicLoss
+  _target_: src.models.components.losses.PoseL1Loss
   weights:
     translation: 10.0
     rotation: 10.0
@@ -48,14 +49,14 @@ criterion:
 vp_criterion:
   _target_: src.models.components.vp_loss.VpLoss
 
-Rel_criterion:
+rel_criterion:
   _target_: src.models.components.losses_non_geodesic.RelPoseLoss
   weights:
     translation: 10.0
     rotation: 10.0
 
 test_metric:
-  _target_: src.models.components.testfunction.Testcamera
+  _target_: src.models.components.test_function.TestCamera
   Reference:
     translation: 1.0
     rotation: 30
