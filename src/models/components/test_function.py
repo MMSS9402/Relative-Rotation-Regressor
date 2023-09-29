@@ -2,7 +2,6 @@ import cv2
 from tqdm import tqdm
 import numpy as np
 import torch
-import lietorch
 import os
 import glob
 import time
@@ -19,10 +18,9 @@ from collections import OrderedDict
 import pickle
 import json
 from typing import Callable
-from lietorch import SE3
 
 
-class Testcamera(Callable):
+class TestCamera(Callable):
     def __init__(self, Reference):
         self.Reference_tr = Reference.translation
         self.Reference_rot = Reference.rotation

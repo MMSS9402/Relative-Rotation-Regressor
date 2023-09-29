@@ -19,7 +19,8 @@ ctrlc:
       NUM_QUERIES: 3
       PRE_NORM: False
 
-ctrlc_checkpoint_path: "/home/kmuvcl/source/CTRL-C/logs/checkpoint0099.pth"
+#ctrlc_checkpoint_path: "/home/kmuvcl/source/CTRL-C/logs/checkpoint0099.pth"
+ctrlc_checkpoint_path: "/data/chop-private_164/CuTi/ckpt/checkpoint0099.pth"
 
 pos_encoder:
   _target_: src.models.components.position_encoding.PositionEncodingSine1D
@@ -60,7 +61,7 @@ vp_criterion:
 
 
 test_metric:
-  _target_: src.models.components.testfunction.Testcamera
+  _target_: src.models.components.test_function.TestCamera
   Reference:
     translation: 1.0
     rotation: 30

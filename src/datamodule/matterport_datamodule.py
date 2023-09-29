@@ -39,15 +39,18 @@ class MatterportDatamodule(LightningDataModule):
         if stage == "fit":
             self.train_dataset = hydra.utils.instantiate(
                 self.dataset,
+                name="Matterport",
                 ann_filename=self.train_ann_filename,
             )
             self.val_dataset = hydra.utils.instantiate(
                 self.dataset,
+                name="Matterport",
                 ann_filename=self.val_ann_filename,
             )
         elif stage == "test":
             self.test_dataset = hydra.utils.instantiate(
                 self.dataset,
+                name="Matterport",
                 ann_filename=self.test_ann_filename
             )
         else:

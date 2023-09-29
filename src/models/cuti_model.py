@@ -13,7 +13,6 @@ from pytorch_lightning import LightningModule
 import pyrootutils
 import torch
 import torch.nn as nn
-from lietorch import SE3
 from omegaconf import DictConfig
 from einops import rearrange
 import cv2
@@ -176,8 +175,14 @@ class CuTiLitModule(LightningModule):
         hs0 = hs0[-1]  # [b x n x c]
         hs1 = hs1[-1]
 
-        hs0[:, 3:, :] = hs0[:, 3:, :] + self.line_idx_embedding.weight
-        hs1[:, 3:, :] = hs1[:, 3:, :] + self.line_idx_embedding.weight
+        hs0_vps, hs0_lines = torch.split(hs0, [3, self.max_num_line], dim=1)
+        hs1_vps, hs1_lines = torch.split(hs1, [3, self.max_num_line], dim=1)
+
+        hs0_lines = hs0_lines + self.line_idx_embedding.weight
+        hs1_lines = hs1_lines + self.line_idx_embedding.weight
+
+        hs0 = torch.cat([hs0_vps, hs0_lines], dim=1)
+        hs1 = torch.cat([hs1_vps, hs1_lines], dim=1)
 
         feat0 = hs0
         feat1 = hs1
@@ -185,12 +190,10 @@ class CuTiLitModule(LightningModule):
         feat0 = feat0 + self.image_idx_embedding.weight[0]  # + vp0_pos # + vp_one_hot0
         feat1 = feat1 + self.image_idx_embedding.weight[1]  # + vp1_pos # + vp_one_hot1
 
-
         # memory0 = memory0.reshape([batch_size, -1, self.hidden_dim])
         # memory1 = memory1.reshape([batch_size, -1, self.hidden_dim])
         memory0 = rearrange(memory0, "b h w c -> b (h w) c").contiguous()
         memory1 = rearrange(memory1, "b h w c -> b (h w) c").contiguous()
-
 
         # # 여기부터
         # reshape_feat0 = torch.zeros_like(feat0)
@@ -227,16 +230,6 @@ class CuTiLitModule(LightningModule):
                 "pred_view1_vps": pred_view1_vps,
                 }
 
-    # def normalize_preds(self, pred_poses):
-    #     pred_out_se3 = SE3(pred_poses)
-    #     Gs = SE3.IdentityLike(pred_out_se3)
-    #     normalized = pred_out_se3.data[:, :, 3:].norm(dim=-1).unsqueeze(2)
-    #     eps = torch.ones_like(normalized) * .01
-    #     pred_out_se3_new = SE3(torch.clone(pred_out_se3.data))
-    #     pred_out_se3_new.data[:, :, 3:] = pred_out_se3.data[:, :, 3:] / torch.max(normalized, eps)
-
-    #     out_Gs = SE3(torch.cat([Gs[:, :1].data, pred_out_se3_new.data[:, 1:]], dim=1))
-    #     return out_Gs
 
     def normalize_preds(self, pred_poses):
         pred_quaternion = pred_poses[:, 3:]
@@ -385,8 +378,7 @@ class CuTiLitModule(LightningModule):
 
     def shared_step(self, batch: Any):
         images, lines, target = batch
-        # target_poses = SE3(target['poses'])
-        target_poses = target['poses']
+        target_poses = target['poses'][:,1]
 
         pred_dict = self.forward(images, lines, target)
 
@@ -412,7 +404,7 @@ class CuTiLitModule(LightningModule):
         # self.log("train/loss_rot", loss_dict["loss_rot"], on_step=False, on_epoch=True, prog_bar=True)
         # self.log("train/loss_vp0", loss_dict["loss_vp0"], on_step=False, on_epoch=True, prog_bar=True)
         # self.log("train/loss_vp1", loss_dict["loss_vp1"], on_step=False, on_epoch=True, prog_bar=True)
-        # self.log("train/acc", acc, on_step=False, on_epoch=True, prog_bar=True)
+        self.log("train/acc", loss, on_step=False, on_epoch=True, prog_bar=True)
         # self.manual_backward(loss)
         # # loss.backward()
         # for name, param in self.named_parameters():
@@ -431,16 +423,31 @@ class CuTiLitModule(LightningModule):
                 print(name, param.grad)
 
     def validation_step(self, batch: Any, batch_idx: int):
-        loss, loss_dict, preds, target_pose = self.shared_step(batch)
+        loss, loss_dict, preds, targets = self.shared_step(batch)
 
         # update and log metrics
         self.log("val/loss", loss, on_step=False, on_epoch=True, prog_bar=True)
         self.log("val/loss_tr", loss_dict["loss_tr"], on_step=False, on_epoch=True, prog_bar=True)
         self.log("val/loss_rot", loss_dict["loss_rot"], on_step=False, on_epoch=True, prog_bar=True)
-        # self.log("val/acc", acc, on_step=False, on_epoch=True, prog_bar=True)
+        self.log("val/acc", loss, on_step=False, on_epoch=True, prog_bar=True)
 
-        # visualization
-        # if batch_idx == 0:
+        if batch_idx == 0:
+            output_dir = "./output"
+            os.makedirs(output_dir, exist_ok=True)
+            output_path = os.path.join(output_dir, "update_value.csv")
+
+            targets = convert_tensor_to_numpy_array(targets)
+            preds = convert_tensor_to_numpy_array(preds)
+
+            file_open_mode = "a" if os.path.exists(output_path) else "w"
+            with open(output_path, file_open_mode) as file:
+                file.write(f"{self.current_epoch:03d} epoch{',' * 14}\n")
+                for target_val, pred_val in zip(targets, preds):
+                    file.write(f"{target_val[0]},{target_val[1]},{target_val[2]},"
+                               f"{target_val[3]},{target_val[4]},{target_val[5]},{target_val[6]},"
+                               f"{pred_val[0]},{pred_val[1]},{pred_val[2]},"
+                               f"{pred_val[3]},{pred_val[4]},{pred_val[5]},{pred_val[6]}\n")
+
         #     images, poses, *rest = batch
 
         #     src_image = convert_tensor_to_cv_image(images[0, 0])

@@ -1,9 +1,6 @@
 import torchvision.transforms as transforms
-import numpy as np
-import numpy.linalg as LA
 
-
-class RGBDAugmentor:
+class RGBAugmentor:
     """perform augmentation on RGB-D video"""
 
     def __init__(self, reshape_size: (int, int)):
@@ -24,7 +21,7 @@ class RGBDAugmentor:
         """color jittering"""
         num, ch, ht, wd = images.shape
         images = images.permute(1, 2, 3, 0).reshape(ch, ht, wd * num)
-        images = self.augcolor(images[[2, 1, 0]] / 255.0)
+        images = self.augcolor(images[[2, 1, 0]])
         return (
             images[[2, 1, 0]].reshape(ch, ht, wd, num).permute(3, 0, 1, 2).contiguous()
         )

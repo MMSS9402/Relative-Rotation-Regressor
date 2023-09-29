@@ -8,6 +8,7 @@ num_workers: 4
 pin_memory: False
 dataset:
   _target_: src.datamodule.components.matterport_dataset.MatterportDataset
-  data_path: "/home/kmuvcl/source/oldCuTi/CuTi/matterport"
+#  data_path: "/home/kmuvcl/source/oldCuTi/CuTi/matterport"
+  data_path: "/data/chop-private_164/CuTi/small_data"
   reshape_size: [480, 640]
   use_mini_dataset: False
