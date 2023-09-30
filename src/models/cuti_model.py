@@ -87,19 +87,19 @@ class CuTiLitModule(LightningModule):
         self.transformer_block = hydra.utils.instantiate(transformer)
         # self.vptransformer_block = hydra.utils.instantiate(vptransformer)
 
-        # self.encoder_layer = nn.TransformerEncoderLayer(d_model=2*self.hidden_dim, nhead=self.num_head)
+        # self.encoder_layer = nn.TransformerEncoderLayer(d_model=2 * self.hidden_dim, nhead=self.num_head)
         # self.transformer_encoder = nn.TransformerEncoder(self.encoder_layer, num_layers=3)
 
-        translation_regressor_dim = 2*15*20
-        rotation_regressor_dim = 2*15*20
-        in_channels = int(self.max_num_line)
-        # self.rotation_conv = nn.Sequential(
-        #     nn.Conv1d(in_channels, in_channels, kernel_size=1, stride=1, padding=0, bias=False),
-        #     nn.LeakyReLU(0.1),
-        #     nn.Conv1d(in_channels, in_channels, kernel_size=1, stride=1, padding=0, bias=False),
-        #     nn.LeakyReLU(0.1),
-        #     nn.Conv1d(in_channels, 1, kernel_size=1, stride=1, padding=0, bias=False),
-        # )
+        translation_regressor_dim = 15 * 20
+        rotation_regressor_dim = 15 * 20
+        in_channels = int(self.max_num_line + self.num_vp)
+        self.rotation_conv = nn.Sequential(
+            nn.Conv1d(in_channels, in_channels, kernel_size=1, stride=1, padding=0, bias=False),
+            nn.ReLU(),
+            nn.Conv1d(in_channels, in_channels, kernel_size=1, stride=1, padding=0, bias=False),
+            nn.ReLU(),
+            nn.Conv1d(in_channels, 1, kernel_size=1, stride=1, padding=0, bias=False),
+        )
         self.translation_regressor = nn.Sequential(
             nn.Linear(translation_regressor_dim, translation_regressor_dim),
             nn.LeakyReLU(0.1),
@@ -123,7 +123,7 @@ class CuTiLitModule(LightningModule):
             nn.Conv2d(self.hidden_dim, 1, kernel_size=1, stride=1, padding=0, bias=False),
         )
 
-        self.maxpool = nn.MaxPool1d(2,1)
+        self.maxpool = nn.MaxPool1d(2, 1)
 
         self.query_embed = nn.Embedding(2, hidden_dim)
 
@@ -191,73 +191,53 @@ class CuTiLitModule(LightningModule):
         #     reshape_feat1[i] = feat1[i, tgt_idx1[3*i:3*(i+1)]]
         # feat = torch.cat([reshape_feat0,reshape_feat1],dim=2)
         # feat = self.transformer_encoder(feat)
-        
+
         # feat0, feat1 = self.transformer_block(feat0, feat1)
         # feat0 = self.rotation_conv(feat0).squeeze(1)
         # feat1 = self.rotation_conv(feat1).squeeze(1)
         
         # feat = torch.cat([feat0,feat1],dim=1)
         
-        
         memory0 = memory0.reshape([batch_size,-1,self.hidden_dim])
         memory1 = memory1.reshape([batch_size,-1,self.hidden_dim])
         memory0, memory1 = self.transformer_block(memory0, memory1)
-        memory0 = memory0.reshape([batch_size,self.hidden_dim,15,20])
-        memory1 = memory1.reshape([batch_size,self.hidden_dim,15,20])
+
+
+
+        memory0 = rearrange(memory0, "b (h w) c -> b c h w", h=15, w=20).contiguous()
+        memory1 = rearrange(memory1, "b (h w) c -> b c h w", h=15, w=20).contiguous()
+
         memory0 = self.image_conv(memory0)
         memory1 = self.image_conv(memory1)
-        memory = torch.cat([memory0,memory1],dim=1)
-        feat = memory.reshape([batch_size,-1])
+        memory = torch.cat([memory0, memory1], dim=1)
+
         # feat0, feat1 = self.vptransformer_block(feat0,feat1)
 
-        R = self.rotation_regressor(feat)
-        
-        T = self.translation_regressor(feat)
-        
-        pose_preds = torch.cat([T,R],dim=1)
+        R = self.rotation_regressor(memory1.reshape([batch_size, -1]))
+        T = self.translation_regressor(memory1.reshape([batch_size, -1]))
+
+        pose_preds = torch.cat([T, R], dim=1)
 
         return {"pred_pose": self.normalize_preds(pose_preds),
                 "pred_view0_vps": pred_view0_vps,
                 "pred_view1_vps": pred_view1_vps,
                 }
-    
-    def endpoints_pooling(self,segs, all_descriptors, img_shape):
-        assert segs.ndim == 4 and segs.shape[-2:] == (2, 2)
-        filter_shape = all_descriptors.shape[-2:]
-        scale_x = filter_shape[1] / img_shape[1]
-        scale_y = filter_shape[0] / img_shape[0]
-        scaled_segs = torch.round(segs * torch.tensor([scale_x, scale_y]).to(segs)).long()
-        scaled_segs[..., 0] = torch.clip(scaled_segs[..., 0], 0, filter_shape[1] - 1)
-        scaled_segs[..., 1] = torch.clip(scaled_segs[..., 1], 0, filter_shape[0] - 1)
-        line_descriptors = [all_descriptors[None, b, ..., torch.squeeze(b_segs[..., 1]), torch.squeeze(b_segs[..., 0])]
-                            for b, b_segs in enumerate(scaled_segs)]
-        line_descriptors = torch.cat(line_descriptors)
-        return line_descriptors  # Shape (1, 256, 308, 2)
-    
-    def class_labeling(self,line,logit_class0,logit_class1,logit_class2,tgt_idx):
-        result = -torch.ones_like(logit_class0)
-        for b, idx in zip(*tgt_idx):
-            mask0 = logit_class0[b, :, 0] > 0.8
-            mask1 = logit_class1[b, :, 0] > 0.8
-            mask2 = logit_class2[b, :, 0] > 0.8
-            
-            if idx == 0:
-                result[b, mask0, 0] = 0
-            elif idx == 1:
-                result[b, mask1, 0] = 1
-            elif idx == 2:
-                result[b, mask2, 0] = 2
 
-        return result
-        
-    
-    def positional_encoding(self,d_model, pos):
+    def normalize_preds(self, pred_poses):
+        pred_quaternion = pred_poses[:, 3:]
+        normalized = torch.norm(pred_quaternion, dim=-1, keepdim=True)
+        eps = torch.ones_like(normalized) * .01
+        normalize_quat = pred_quaternion / torch.max(normalized, eps)
+
+        return torch.cat([pred_poses[:, :3], normalize_quat], dim=1)
+
+    def positional_encoding(self, d_model, pos):
         pos_enc = torch.zeros((pos.shape[0], pos.shape[1], d_model))
         for i in range(0, d_model, 2):
             pos_enc[:, :, i] = torch.sin(pos / 10000 ** (2 * i / d_model))
             pos_enc[:, :, i + 1] = torch.cos(pos / 10000 ** (2 * i / d_model))
         return pos_enc
-    
+
     def _get_src_permutation_idx(self, indices):
         # permute predictions following indices
         batch_idx = torch.cat([torch.full_like(src, i) for i, (src, _) in enumerate(indices)])
@@ -270,19 +250,6 @@ class CuTiLitModule(LightningModule):
         tgt_idx = torch.cat([tgt for (_, tgt) in indices])
         return batch_idx, tgt_idx
 
-    def normalize_preds(self, pred_poses):
-        pred_quaternion = pred_poses[:,3:]
-        normalized_rot = torch.norm(pred_quaternion,dim=1).unsqueeze(1)
-        eps = torch.ones_like(normalized_rot) * .01
-        normalize_quaternion = pred_quaternion/normalized_rot   
-        # pred_poses[:,3:] = normalize_quaternion
-        # normalized_rot = pred_poses.data[:,3:].norm(dim=-1, keepdim=True)
-        # eps = torch.ones_like(normalized_rot) * .01
-        # pred_poses_new = torch.clone(pred_poses)
-        # pred_poses_new[:, 3:] = pred_poses.data[:, 3:] / torch.max(normalized_rot, eps)
-
-
-        return torch.cat([pred_poses[:, :3], normalize_quaternion], dim=1) #pred_poses_new
 
     def eval_camera(self, predictions):
         acc_threshold = {
@@ -294,7 +261,7 @@ class CuTiLitModule(LightningModule):
 
         gt_tran = np.vstack(predictions["camera"]["gts"]["tran"])
         gt_rot = np.vstack(predictions["camera"]["gts"]["rot"])
-        
+
         top1_error = {
             "tran": np.linalg.norm(gt_tran - pred_tran, axis=1),
             "rot": 2 * np.arccos(
@@ -339,7 +306,7 @@ class CuTiLitModule(LightningModule):
         pred_dict = self.forward(images, lines, target)
 
         vps = rearrange(target['vps'], "b i l c -> i b l c ").contiguous()
-        
+
         index0 = self.matcher(pred_dict["pred_view0_vps"], vps[0])
         index1 = self.matcher(pred_dict["pred_view1_vps"], vps[1])
 
@@ -376,7 +343,7 @@ class CuTiLitModule(LightningModule):
     def train_epoch_end(self, outputs: List[Any]):
         for name, param in self.named_parameters():
             if param.requires_grad:
-                print(name,param.grad)
+                print(name, param.grad)
 
     def validation_step(self, batch: Any, batch_idx: int):
         loss, loss_dict, preds, target_pose = self.shared_step(batch)
