@@ -148,7 +148,7 @@ class RGBDDataset(Dataset):
         poses = np.stack(poses).astype(np.float32)
         intrinsics = np.stack(intrinsics).astype(np.float32)
 
-        images = np.stack(images).astype(np.float32) / 255.0
+        images = np.stack(images).astype(np.float32)
         images = torch.from_numpy(images).float() # [2,480,640,3] => [img_num,h,w,c]
         images = images.permute(0, 3, 1, 2)  # [2,3,480,640] => [img_num,c,h,w]
 
@@ -159,7 +159,6 @@ class RGBDDataset(Dataset):
         vps = []
         for i in range(2):
             vps.append(np.array(vp_list[i]))
-
         images = self.aug(
             images
         )

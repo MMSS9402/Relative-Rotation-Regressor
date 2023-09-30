@@ -62,13 +62,12 @@ class GPTran(nn.Module):
         - samples.mask: a binary mask of shape [batch_size x H x W], containing 1 on padded pixels
         """
         extra_info = {}
-        # import pdb; pdb.set_trace()
         #print("image_shaep:",samples.shape)
         if isinstance(samples, (list, torch.Tensor)):
             # samples는 배치 단위 이미지
             samples = nested_tensor_from_tensor_list(samples)
         # 이미지를 backbone을 통과시켜 feature 뽑고
-        
+
         features, pos = self.backbone(samples)
 
         # feature 펴서 src 만들기
@@ -84,7 +83,6 @@ class GPTran(nn.Module):
         # vlines [bs, n, 3]
         if self.use_structure_tensor:
             lines = self._to_structure_tensor(lines)
-
         # src를 projection 시켜서 transformer에 넣어주기
         # 여기서 query embedding에 들어가고, 이게 transformer decoder에 들어갈 때 tgt로 변수명이 표시됩니다.
         hs, memory = self.transformer(
@@ -131,7 +129,19 @@ class GPTran(nn.Module):
         #         outputs_hvp2,
         #     )
         #hs[:, :, 3:, :]
-        return hs,memory.permute(0,2,3,1),outputs_vp1[-1],outputs_vp2[-1],outputs_vp3[-1]#,outputs_vline_class[-1], outputs_hline_class[-1],outputs_hline_class2[-1]
+        pred_view_vps = torch.cat([outputs_vp1[-1].unsqueeze(1),
+                                    outputs_vp2[-1].unsqueeze(1),
+                                    outputs_vp3[-1].unsqueeze(1)], dim=1)
+
+        
+        ctrlc_output = {
+                        "pred_view_vps": pred_view_vps,
+                        "pred_view_class1": outputs_vp1_class[-1],
+                        "pred_view_class2": outputs_vp2_class[-1],
+                        "pred_view_class3": outputs_vp3_class[-1],
+                        }
+        return hs,memory.permute(0,2,3,1),ctrlc_output
+
 
     def _to_structure_tensor(self, params):
         (a, b, c) = torch.unbind(params, dim=-1)
@@ -141,6 +151,8 @@ class GPTran(nn.Module):
         vlines = F.normalize(vlines, p=2, dim=-1)
         u, s, v = torch.svd(weights * vlines)
         return v[:, :, :, -1]
+    
+    
 
 
 class MLP(nn.Module):

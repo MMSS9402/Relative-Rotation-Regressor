@@ -26,9 +26,10 @@ class RGBDAugmentor:
         images = images.permute(1, 2, 3, 0).reshape(ch, ht, wd * num)
         images = self.augcolor(images[[2, 1, 0]] / 255.0)
         return (
-            images[[2, 1, 0]].reshape(ch, ht, wd, num).permute(3, 0, 1, 2).contiguous()
+            images.reshape(ch, ht, wd, num).permute(3, 0, 1, 2).contiguous()
         )
 
     def __call__(self, images):
+
         images = self.color_transform(images)
         return images

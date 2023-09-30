@@ -24,7 +24,7 @@ class LoFTREncoderLayer(nn.Module):
         # feed-forward network
         self.mlp = nn.Sequential(
             nn.Linear(d_model*2, d_model*2, bias=False),
-            nn.ReLU(True),
+            nn.LeakyReLU(0.1),
             nn.Linear(d_model*2, d_model, bias=False),
         )
 

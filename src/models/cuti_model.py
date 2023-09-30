@@ -2,6 +2,7 @@ from typing import Any, List, Optional
 import sys
 import os
 import time
+import wandb
 
 import torch.nn.functional as F
 import torch.nn as nn
@@ -67,6 +68,8 @@ class CuTiLitModule(LightningModule):
         
         self.ctrlc.requires_grad_(False)
         self.ctrlc.eval()
+        self.thresh_line_pos = np.cos(np.radians(88.0), dtype=np.float32) # near 0.0
+        self.thresh_line_neg = np.cos(np.radians(85.0), dtype=np.float32)
 
         self.num_image = 2
         self.num_vp = 3
@@ -82,41 +85,41 @@ class CuTiLitModule(LightningModule):
         self.line_idx_embedding = nn.Embedding(self.max_num_line, self.hidden_dim)
 
         self.transformer_block = hydra.utils.instantiate(transformer)
-        self.vptransformer_block = hydra.utils.instantiate(vptransformer)
+        # self.vptransformer_block = hydra.utils.instantiate(vptransformer)
 
-        self.encoder_layer = nn.TransformerEncoderLayer(d_model=2*self.hidden_dim, nhead=self.num_head)
-        self.transformer_encoder = nn.TransformerEncoder(self.encoder_layer, num_layers=3)
+        # self.encoder_layer = nn.TransformerEncoderLayer(d_model=2*self.hidden_dim, nhead=self.num_head)
+        # self.transformer_encoder = nn.TransformerEncoder(self.encoder_layer, num_layers=3)
 
-        translation_regressor_dim = 15*20*2
-        rotation_regressor_dim =  15*20*2
-        in_channels = int(self.max_num_line + self.num_vp)
-        self.rotation_conv = nn.Sequential(
-            nn.Conv1d(in_channels, in_channels, kernel_size=1, stride=1, padding=0, bias=False),
-            nn.ReLU(),
-            nn.Conv1d(in_channels, in_channels, kernel_size=1, stride=1, padding=0, bias=False),
-            nn.ReLU(),
-            nn.Conv1d(in_channels, 1, kernel_size=1, stride=1, padding=0, bias=False),
-        )
+        translation_regressor_dim = 2*15*20
+        rotation_regressor_dim = 2*15*20
+        in_channels = int(self.max_num_line)
+        # self.rotation_conv = nn.Sequential(
+        #     nn.Conv1d(in_channels, in_channels, kernel_size=1, stride=1, padding=0, bias=False),
+        #     nn.LeakyReLU(0.1),
+        #     nn.Conv1d(in_channels, in_channels, kernel_size=1, stride=1, padding=0, bias=False),
+        #     nn.LeakyReLU(0.1),
+        #     nn.Conv1d(in_channels, 1, kernel_size=1, stride=1, padding=0, bias=False),
+        # )
         self.translation_regressor = nn.Sequential(
             nn.Linear(translation_regressor_dim, translation_regressor_dim),
-            nn.ReLU(),
+            nn.LeakyReLU(0.1),
             nn.Linear(translation_regressor_dim, translation_regressor_dim),
-            nn.ReLU(),
+            nn.LeakyReLU(0.1),
             nn.Linear(translation_regressor_dim, 3),
         )
         self.rotation_regressor = nn.Sequential(
             nn.Linear(rotation_regressor_dim, rotation_regressor_dim),
-            nn.ReLU(),
+            nn.LeakyReLU(0.1),
             nn.Linear(rotation_regressor_dim, rotation_regressor_dim),
-            nn.ReLU(),
+            nn.LeakyReLU(0.1),
             nn.Linear(rotation_regressor_dim, 4),
         )
 
         self.image_conv = nn.Sequential(
             nn.Conv2d(self.hidden_dim, self.hidden_dim, kernel_size=1, stride=1, padding=0, bias=False),
-            nn.ReLU(),
+            nn.LeakyReLU(0.1),
             nn.Conv2d(self.hidden_dim, self.hidden_dim, kernel_size=1, stride=1, padding=0, bias=False),
-            nn.ReLU(),
+            nn.LeakyReLU(0.1),
             nn.Conv2d(self.hidden_dim, 1, kernel_size=1, stride=1, padding=0, bias=False),
         )
 
@@ -132,7 +135,7 @@ class CuTiLitModule(LightningModule):
 
         self.optimizer = optimizer
         self.scheduler = scheduler
-        # self.automatic_optimization = False
+        self.automatic_optimization = False
 
     def forward(self, images: torch.Tensor, lines: torch.Tensor, target):
         endpoint = target['endpoint']
@@ -141,52 +144,44 @@ class CuTiLitModule(LightningModule):
         
         with torch.no_grad():
             # [bs, line_num, hidden_dim]
-            hs0, memory0, pred_view0_vp0, pred_view0_vp1, pred_view0_vp2 = self.ctrlc(
+            hs0, memory0, ctrlc_output0 = self.ctrlc(
                 images[:, 0], lines[:, 0]
             )
-            hs1, memory1, pred_view0_vp0, pred_view0_vp1, pred_view0_vp2 = self.ctrlc(
+            hs1, memory1, ctrlc_output1 = self.ctrlc(
                 images[:, 1], lines[:, 1]
             )
-
-        pred_view0_vps = torch.cat([pred_view0_vp0.unsqueeze(1),
-                                    pred_view0_vp1.unsqueeze(1),
-                                    pred_view0_vp2.unsqueeze(1)], dim=1)
-        pred_view1_vps = torch.cat([pred_view0_vp0.unsqueeze(1),
-                                    pred_view0_vp1.unsqueeze(1),
-                                    pred_view0_vp2.unsqueeze(1)], dim=1)
+            
+        # print("memory0",memory0)
+        # print("memory1",memory1)
+        pred_view0_vps = ctrlc_output0['pred_view_vps']
+        pred_view1_vps = ctrlc_output1['pred_view_vps']
         
-        index0 = self.matcher(pred_view0_vps, vps[0])
-        index1 = self.matcher(pred_view1_vps, vps[1])
+        pred_view0_class1 = ctrlc_output0["pred_view_class1"].sigmoid()
+        pred_view0_class2 = ctrlc_output0["pred_view_class2"].sigmoid()
+        pred_view0_class3 = ctrlc_output0["pred_view_class3"].sigmoid()
         
-        _,tgt_idx0 = self._get_tgt_permutation_idx(index0)
-        _,tgt_idx1 = self._get_tgt_permutation_idx(index1)
-        
-        tgt_idx0 = tgt_idx0.unsqueeze(0).reshape([batch_size,self.num_vp])
-        tgt_idx1 = tgt_idx1.unsqueeze(0).reshape([batch_size,self.num_vp])
-
-        # vp_one_hot0 = F.one_hot(tgt_idx0,num_classes=256).cuda()
-        # vp_one_hot1 = F.one_hot(tgt_idx1,num_classes=256).cuda()
-
-        vp0_pos = self.positional_encoding(self.hidden_dim,tgt_idx0).cuda()
-        vp1_pos = self.positional_encoding(self.hidden_dim,tgt_idx1).cuda()
+        pred_view1_class1 = ctrlc_output1["pred_view_class1"].sigmoid()
+        pred_view1_class2 = ctrlc_output1["pred_view_class2"].sigmoid()
+        pred_view1_class3 = ctrlc_output1["pred_view_class3"].sigmoid()
 
         # using last decoder layer's feature
         hs0 = hs0[-1]  # [b x n x c]
         hs1 = hs1[-1]
-
-        hs0[:, 3:, :] = hs0[:, 3:, :] + self.line_idx_embedding.weight
-        hs1[:, 3:, :] = hs1[:, 3:, :] + self.line_idx_embedding.weight
-
-        feat0 = hs0
-        feat1 = hs1
-
-        feat0 = feat0 + self.image_idx_embedding.weight[0] #+ vp0_pos # + vp_one_hot0 
-        feat1 = feat1 + self.image_idx_embedding.weight[1] #+ vp1_pos # + vp_one_hot1
         
-        memory0 = memory0.reshape([batch_size,-1,self.hidden_dim])
-        memory1 = memory1.reshape([batch_size,-1,self.hidden_dim])
+        # hs0 = hs0 + hs0_pos
+        # hs1 = hs1 + hs1_pos
 
+        # hs0 = hs0[:, 3:, :] + self.line_idx_embedding.weight
+        # hs1 = hs1[:, 3:, :] + self.line_idx_embedding.weight
+        
+        # hs0[:, 3:, :] = hs0[:, 3:, :] + self.line_idx_embedding.weight
+        # hs1[:, 3:, :] = hs1[:, 3:, :] + self.line_idx_embedding.weight
 
+        # feat0 = torch.cat([hs0,view0_pooling.reshape([batch_size,self.max_num_line,-1])],dim=2)
+        # feat1 = torch.cat([hs1,view1_pooling.reshape([batch_size,self.max_num_line,-1])],dim=2)
+        
+        # feat0 = feat0 + self.image_idx_embedding.weight[0] 
+        # feat1 = feat1 + self.image_idx_embedding.weight[1] 
 
         # # 여기부터
         # reshape_feat0 = torch.zeros_like(feat0)
@@ -198,19 +193,26 @@ class CuTiLitModule(LightningModule):
         # feat = self.transformer_encoder(feat)
         
         # feat0, feat1 = self.transformer_block(feat0, feat1)
+        # feat0 = self.rotation_conv(feat0).squeeze(1)
+        # feat1 = self.rotation_conv(feat1).squeeze(1)
+        
+        # feat = torch.cat([feat0,feat1],dim=1)
+        
+        
+        memory0 = memory0.reshape([batch_size,-1,self.hidden_dim])
+        memory1 = memory1.reshape([batch_size,-1,self.hidden_dim])
         memory0, memory1 = self.transformer_block(memory0, memory1)
-
-
         memory0 = memory0.reshape([batch_size,self.hidden_dim,15,20])
         memory1 = memory1.reshape([batch_size,self.hidden_dim,15,20])
         memory0 = self.image_conv(memory0)
         memory1 = self.image_conv(memory1)
         memory = torch.cat([memory0,memory1],dim=1)
-
+        feat = memory.reshape([batch_size,-1])
         # feat0, feat1 = self.vptransformer_block(feat0,feat1)
+
+        R = self.rotation_regressor(feat)
         
-        R = self.rotation_regressor(memory.reshape([batch_size,-1]))
-        T = self.translation_regressor(memory.reshape([batch_size,-1]))
+        T = self.translation_regressor(feat)
         
         pose_preds = torch.cat([T,R],dim=1)
 
@@ -218,17 +220,36 @@ class CuTiLitModule(LightningModule):
                 "pred_view0_vps": pred_view0_vps,
                 "pred_view1_vps": pred_view1_vps,
                 }
-
-    # def normalize_preds(self, pred_poses):
-    #     pred_out_se3 = SE3(pred_poses)
-    #     Gs = SE3.IdentityLike(pred_out_se3)
-    #     normalized = pred_out_se3.data[:, :, 3:].norm(dim=-1).unsqueeze(2)
-    #     eps = torch.ones_like(normalized) * .01
-    #     pred_out_se3_new = SE3(torch.clone(pred_out_se3.data))
-    #     pred_out_se3_new.data[:, :, 3:] = pred_out_se3.data[:, :, 3:] / torch.max(normalized, eps)
     
-    #     out_Gs = SE3(torch.cat([Gs[:, :1].data, pred_out_se3_new.data[:, 1:]], dim=1))
-    #     return out_Gs
+    def endpoints_pooling(self,segs, all_descriptors, img_shape):
+        assert segs.ndim == 4 and segs.shape[-2:] == (2, 2)
+        filter_shape = all_descriptors.shape[-2:]
+        scale_x = filter_shape[1] / img_shape[1]
+        scale_y = filter_shape[0] / img_shape[0]
+        scaled_segs = torch.round(segs * torch.tensor([scale_x, scale_y]).to(segs)).long()
+        scaled_segs[..., 0] = torch.clip(scaled_segs[..., 0], 0, filter_shape[1] - 1)
+        scaled_segs[..., 1] = torch.clip(scaled_segs[..., 1], 0, filter_shape[0] - 1)
+        line_descriptors = [all_descriptors[None, b, ..., torch.squeeze(b_segs[..., 1]), torch.squeeze(b_segs[..., 0])]
+                            for b, b_segs in enumerate(scaled_segs)]
+        line_descriptors = torch.cat(line_descriptors)
+        return line_descriptors  # Shape (1, 256, 308, 2)
+    
+    def class_labeling(self,line,logit_class0,logit_class1,logit_class2,tgt_idx):
+        result = -torch.ones_like(logit_class0)
+        for b, idx in zip(*tgt_idx):
+            mask0 = logit_class0[b, :, 0] > 0.8
+            mask1 = logit_class1[b, :, 0] > 0.8
+            mask2 = logit_class2[b, :, 0] > 0.8
+            
+            if idx == 0:
+                result[b, mask0, 0] = 0
+            elif idx == 1:
+                result[b, mask1, 0] = 1
+            elif idx == 2:
+                result[b, mask2, 0] = 2
+
+        return result
+        
     
     def positional_encoding(self,d_model, pos):
         pos_enc = torch.zeros((pos.shape[0], pos.shape[1], d_model))
@@ -262,79 +283,6 @@ class CuTiLitModule(LightningModule):
 
 
         return torch.cat([pred_poses[:, :3], normalize_quaternion], dim=1) #pred_poses_new
-
-
-    def _sqrt_positive_part(self,x: torch.Tensor) -> torch.Tensor:
-        """
-        Returns torch.sqrt(torch.max(0, x))
-        but with a zero subgradient where x is 0.
-        """
-        ret = torch.zeros_like(x)
-        positive_mask = x > 0
-        ret[positive_mask] = torch.sqrt(x[positive_mask])
-        return ret
-
-
-    def matrix_to_quaternion(self,matrix: torch.Tensor) -> torch.Tensor:
-        """
-        Convert rotations given as rotation matrices to quaternions.
-
-        Args:
-            matrix: Rotation matrices as tensor of shape (..., 3, 3).
-
-        Returns:
-            quaternions with real part first, as tensor of shape (..., 4).
-        """
-        if matrix.size(-1) != 3 or matrix.size(-2) != 3:
-            raise ValueError(f"Invalid rotation matrix shape {matrix.shape}.")
-
-        batch_dim = matrix.shape[:-2]
-        m00, m01, m02, m10, m11, m12, m20, m21, m22 = torch.unbind(
-            matrix.reshape(batch_dim + (9,)), dim=-1
-        )
-
-        q_abs = self._sqrt_positive_part(
-            torch.stack(
-                [
-                    1.0 + m00 + m11 + m22,
-                    1.0 + m00 - m11 - m22,
-                    1.0 - m00 + m11 - m22,
-                    1.0 - m00 - m11 + m22,
-                ],
-                dim=-1,
-            )
-        )
-
-        # we produce the desired quaternion multiplied by each of r, i, j, k
-        quat_by_rijk = torch.stack(
-            [
-                # pyre-fixme[58]: `**` is not supported for operand types `Tensor` and
-                #  `int`.
-                torch.stack([q_abs[..., 0] ** 2, m21 - m12, m02 - m20, m10 - m01], dim=-1),
-                # pyre-fixme[58]: `**` is not supported for operand types `Tensor` and
-                #  `int`.
-                torch.stack([m21 - m12, q_abs[..., 1] ** 2, m10 + m01, m02 + m20], dim=-1),
-                # pyre-fixme[58]: `**` is not supported for operand types `Tensor` and
-                #  `int`.
-                torch.stack([m02 - m20, m10 + m01, q_abs[..., 2] ** 2, m12 + m21], dim=-1),
-                # pyre-fixme[58]: `**` is not supported for operand types `Tensor` and
-                #  `int`.
-                torch.stack([m10 - m01, m20 + m02, m21 + m12, q_abs[..., 3] ** 2], dim=-1),
-            ],
-            dim=-2,
-        )
-
-        # We floor here at 0.1 but the exact level is not important; if q_abs is small,
-        # the candidate won't be picked.
-        flr = torch.tensor(0.1).to(dtype=q_abs.dtype, device=q_abs.device)
-        quat_candidates = quat_by_rijk / (2.0 * q_abs[..., None].max(flr))
-
-        # if not for numerical problems, quat_candidates[i] should be same (up to a sign),
-        # forall i; we pick the best-conditioned one (with the largest denominator)
-
-        return quat_candidates[
-            F.one_hot(q_abs.argmax(dim=-1), num_classes=4) > 0.5, :
-        ].reshape(batch_dim + (4,))
 
     def eval_camera(self, predictions):
         acc_threshold = {
@@ -409,7 +357,7 @@ class CuTiLitModule(LightningModule):
         # update and log metrics
         self.log("train/loss", loss, on_step=False, on_epoch=True, prog_bar=True)
         self.log("train/loss_tr", loss_dict["loss_tr"], on_step=False, on_epoch=True, prog_bar=True)
-        # self.log("train/loss_rot", loss_dict["loss_rot"], on_step=False, on_epoch=True, prog_bar=True)
+        self.log("train/loss_rot", loss_dict["loss_rot"], on_step=False, on_epoch=True, prog_bar=True)
         # self.log("train/loss_vp0", loss_dict["loss_vp0"], on_step=False, on_epoch=True, prog_bar=True)
         # self.log("train/loss_vp1", loss_dict["loss_vp1"], on_step=False, on_epoch=True, prog_bar=True)
         # self.log("train/acc", acc, on_step=False, on_epoch=True, prog_bar=True)
