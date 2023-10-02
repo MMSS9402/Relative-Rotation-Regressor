@@ -45,6 +45,7 @@ class L1Loss(Callable):
         diff_tr, diff_rot = diff.split([3, 4], dim=-1)
         loss_tr = diff_tr.norm(dim=-1).mean()
         loss_rot = diff_rot.norm(dim=-1).mean()
+        
 
         if vp_loss0 is not None and vp_loss1 is not None:
             loss = self.weights_tr * loss_tr + self.weights_rot * loss_rot + self.weights_vp * vp_loss0 + self.weights_vp * vp_loss1

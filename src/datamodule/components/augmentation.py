@@ -22,14 +22,16 @@ class RGBDAugmentor:
 
     def color_transform(self, images):
         """color jittering"""
-        num, ch, ht, wd = images.shape
+        num, ch, h, w = images.shape
         images = images.permute(1, 2, 3, 0).reshape(ch, ht, wd * num)
         images = self.augcolor(images[[2, 1, 0]] / 255.0)
+        
         return (
             images.reshape(ch, ht, wd, num).permute(3, 0, 1, 2).contiguous()
         )
 
     def __call__(self, images):
-
+        print(images[0,:])
         images = self.color_transform(images)
+        print(images[0,:])
         return images

@@ -7,6 +7,7 @@ import cv2
 import torch
 import torch.nn.functional as F
 from torch.utils.data import Dataset
+import torchvision.transforms as transforms
 
 from .augmentation import RGBDAugmentor
 
@@ -26,7 +27,15 @@ class RGBDDataset(Dataset):
         self.ann_filename = ann_filename
 
         self.output_size = reshape_size
-        self.aug = RGBDAugmentor(reshape_size=reshape_size)
+        self.augcolor = transforms.Compose(
+            [
+                transforms.ToTensor(),
+                transforms.ColorJitter(
+                    brightness=0.25, contrast=0.25, saturation=0.25, hue=0.4 / 3.14
+                ),
+                transforms.RandomGrayscale(p=0.1),
+            ]
+        )
 
         self.matterport = False
         if "Matterport" in name:
@@ -87,7 +96,7 @@ class RGBDDataset(Dataset):
             idxs = np.random.choice(segs.shape[0], num_sample, replace=True, p=prob)
             sampled_segs = segs[idxs]
             mask = np.ones([num_sample, 1], dtype=np.float32)
-        return sampled_segs
+        return sampled_segs, mask
 
     def coordinate_yup(self, segs, org_h):
         H = np.array([0, org_h, 0, org_h])
@@ -113,22 +122,25 @@ class RGBDDataset(Dataset):
 
         lines[0] = self.coordinate_yup(lines[0], sizey)
         lines[0] = self.normalize_segs(lines[0], pp=pp, rho=rho)
-        lines[0] = self.sample_segs_np(lines[0], num_sample=512)
+        lines[0], line0_mask = self.sample_segs_np(lines[0], num_sample=512)
         endpoint.append(lines[0])
         lines[0] = self.segs2lines_np(lines[0])
 
         lines[1] = self.coordinate_yup(lines[1], sizey)
         lines[1] = self.normalize_segs(lines[1], pp=pp, rho=rho)
-        lines[1] = self.sample_segs_np(lines[1], num_sample=512)
+        lines[1], line1_mask = self.sample_segs_np(lines[1], num_sample=512)
         endpoint.append(lines[1])
         lines[1] = self.segs2lines_np(lines[1])
+        
+        line_mask = np.stack([line0_mask, line1_mask], axis=0) #[num,line_num,1]
+        line_mask = line_mask.astype(np.float32)
 
         images = F.interpolate(images, size=(sizey, sizex), mode="bilinear")
-        lines = np.array(lines)
+        lines = np.array(lines).astype(np.float32)
         vps = np.array(vps)
         endpoint = np.array(endpoint)
 
-        return images, poses, intrinsics, lines, vps, endpoint
+        return images, poses, intrinsics, lines, vps, endpoint ,line_mask
 
     def __getitem__(self, index):
         target = {}
@@ -142,15 +154,14 @@ class RGBDDataset(Dataset):
         for i in range(2):
             images.append(self.image_read(images_list[i]))
             
-        org_img0 = images[0]
-        org_img1 = images[1]
+        org_img0 = images[0].copy()
+        org_img1 = images[1].copy()
 
         poses = np.stack(poses).astype(np.float32)
         intrinsics = np.stack(intrinsics).astype(np.float32)
-
-        images = np.stack(images).astype(np.float32)
-        images = torch.from_numpy(images).float() # [2,480,640,3] => [img_num,h,w,c]
-        images = images.permute(0, 3, 1, 2)  # [2,3,480,640] => [img_num,c,h,w]
+        
+        # images = torch.from_numpy(images).float() # [2,480,640,3] => [img_num,h,w,c]
+        # images = images.permute(0, 3, 1, 2)  # [2,3,480,640] => [img_num,c,h,w]
 
         poses = torch.from_numpy(poses)
         intrinsics = torch.from_numpy(intrinsics)
@@ -159,12 +170,19 @@ class RGBDDataset(Dataset):
         vps = []
         for i in range(2):
             vps.append(np.array(vp_list[i]))
-        images = self.aug(
-            images
-        )
-        images, poses, intrinsics, lines, vps, endpoint = self.process_geometry(
-            images, poses, intrinsics, lines, vps)
         
+        images[0] = images[0][:,:,::-1].astype(np.float32)
+        images[1] = images[1][:,:,::-1].astype(np.float32)
+        
+        torch.manual_seed(0)
+        images[0] = self.augcolor(images[0] / 255.0)
+        torch.manual_seed(0)
+        images[1] = self.augcolor(images[1] / 255.0)
+        
+        images = torch.stack(images)
+        
+        images, poses, intrinsics, lines, vps, endpoint, line_mask = self.process_geometry(
+            images, poses, intrinsics, lines, vps)
         
         target['vps'] = (
             torch.from_numpy(np.ascontiguousarray(vps)).contiguous().float()
@@ -177,6 +195,9 @@ class RGBDDataset(Dataset):
         )
         target['intrinsics'] = (
             torch.from_numpy(np.ascontiguousarray(intrinsics)).contiguous().float()
+        )
+        target['line_mask'] = (
+            torch.from_numpy(np.ascontiguousarray(line_mask)).contiguous().float()
         )
         
         

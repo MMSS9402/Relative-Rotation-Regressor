@@ -55,7 +55,7 @@ class GPTran(nn.Module):
         self.backbone = backbone
         self.aux_loss = aux_loss
 
-    def forward(self, samples: NestedTensor, extra_samples):
+    def forward(self, samples, lines, line_mask):
         #     def forward(self, samples: NestedTensor):
         """The forward expects a NestedTensor, which consists of:
         - samples.tensor: batched images, of shape [batch_size x 3 x H x W]
@@ -74,11 +74,7 @@ class GPTran(nn.Module):
         src, mask = features[-1].decompose()
         assert mask is not None
         
-        #print("ctrlc.shape:",extra_samples.shape)
-        extra_samples = torch.tensor(extra_samples, dtype = torch.float32)
-        lines = extra_samples
-        
-        lmask = ~extra_samples.bool()
+        lmask = ~line_mask.squeeze(2).bool()
         #print("lmask.shape",lmask.shape)
         # vlines [bs, n, 3]
         if self.use_structure_tensor:

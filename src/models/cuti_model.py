@@ -79,7 +79,7 @@ class CuTiLitModule(LightningModule):
 
         self.pos_encoder = hydra.utils.instantiate(pos_encoder)
 
-        self.feature_embed = nn.Linear(256, self.hidden_dim)  # 128
+        self.feature_embed = nn.Linear(self.hidden_dim, 3*self.hidden_dim)  # 128
 
         self.image_idx_embedding = nn.Embedding(self.num_image, self.hidden_dim)
         self.line_idx_embedding = nn.Embedding(self.max_num_line, self.hidden_dim)
@@ -90,13 +90,15 @@ class CuTiLitModule(LightningModule):
         # self.encoder_layer = nn.TransformerEncoderLayer(d_model=2 * self.hidden_dim, nhead=self.num_head)
         # self.transformer_encoder = nn.TransformerEncoder(self.encoder_layer, num_layers=3)
 
-        translation_regressor_dim = 15 * 20
-        rotation_regressor_dim = 15 * 20
+        translation_regressor_dim = 3 * self.hidden_dim
+        rotation_regressor_dim = 3 * self.hidden_dim
         in_channels = int(self.max_num_line + self.num_vp)
         self.rotation_conv = nn.Sequential(
             nn.Conv1d(in_channels, in_channels, kernel_size=1, stride=1, padding=0, bias=False),
+            nn.BatchNorm1d(in_channels),    
             nn.ReLU(),
             nn.Conv1d(in_channels, in_channels, kernel_size=1, stride=1, padding=0, bias=False),
+            nn.BatchNorm1d(in_channels), 
             nn.ReLU(),
             nn.Conv1d(in_channels, 1, kernel_size=1, stride=1, padding=0, bias=False),
         )
@@ -109,6 +111,7 @@ class CuTiLitModule(LightningModule):
         )
         self.rotation_regressor = nn.Sequential(
             nn.Linear(rotation_regressor_dim, rotation_regressor_dim),
+            nn.BatchNorm1d(rotation_regressor_dim),
             nn.LeakyReLU(0.1),
             nn.Linear(rotation_regressor_dim, rotation_regressor_dim),
             nn.LeakyReLU(0.1),
@@ -117,8 +120,10 @@ class CuTiLitModule(LightningModule):
 
         self.image_conv = nn.Sequential(
             nn.Conv2d(self.hidden_dim, self.hidden_dim, kernel_size=1, stride=1, padding=0, bias=False),
+            nn.BatchNorm1d(self.hidden_dim),
             nn.LeakyReLU(0.1),
             nn.Conv2d(self.hidden_dim, self.hidden_dim, kernel_size=1, stride=1, padding=0, bias=False),
+            nn.BatchNorm1d(self.hidden_dim),
             nn.LeakyReLU(0.1),
             nn.Conv2d(self.hidden_dim, 1, kernel_size=1, stride=1, padding=0, bias=False),
         )
@@ -139,20 +144,20 @@ class CuTiLitModule(LightningModule):
 
     def forward(self, images: torch.Tensor, lines: torch.Tensor, target):
         endpoint = target['endpoint']
+        lmask = target['line_mask']
         vps = rearrange(target['vps'], "b i l c -> i b l c ").contiguous()
         batch_size = vps.shape[1]
         
         with torch.no_grad():
             # [bs, line_num, hidden_dim]
             hs0, memory0, ctrlc_output0 = self.ctrlc(
-                images[:, 0], lines[:, 0]
+                images[:, 0], lines[:, 0], lmask[:, 0]
             )
             hs1, memory1, ctrlc_output1 = self.ctrlc(
-                images[:, 1], lines[:, 1]
+                images[:, 1], lines[:, 1], lmask[:, 1]
             )
-            
-        # print("memory0",memory0)
-        # print("memory1",memory1)
+        
+        import pdb; pdb.set_trace()
         pred_view0_vps = ctrlc_output0['pred_view_vps']
         pred_view1_vps = ctrlc_output1['pred_view_vps']
         
@@ -163,10 +168,44 @@ class CuTiLitModule(LightningModule):
         pred_view1_class1 = ctrlc_output1["pred_view_class1"].sigmoid()
         pred_view1_class2 = ctrlc_output1["pred_view_class2"].sigmoid()
         pred_view1_class3 = ctrlc_output1["pred_view_class3"].sigmoid()
+        
+        view0_endpoint = endpoint[:,0,:,:]
+        view0_endpoint = view0_endpoint.reshape([batch_size,self.max_num_line,2,2])
+        
+        view1_endpoint = endpoint[:,1,:,:]
+        view1_endpoint = view1_endpoint.reshape([batch_size,self.max_num_line,2,2])
+        
+        memory0 = rearrange(memory0, "b h w c -> b c h w ").contiguous()
+        memory1 = rearrange(memory1, "b h w c -> b c h w ").contiguous()
+        
+        view0_pooling = self.endpoints_pooling(view0_endpoint,memory0,(480,640))
+        view1_pooling = self.endpoints_pooling(view1_endpoint,memory1,(480,640))
+        
+        view0_pooling = rearrange(view0_pooling, "b c l i -> b l (i c) ").contiguous()
+        view1_pooling = rearrange(view1_pooling, "b c l i -> b l (i c) ").contiguous()
 
         # using last decoder layer's feature
         hs0 = hs0[-1]  # [b x n x c]
         hs1 = hs1[-1]
+        
+        vp_feat0 = self.feature_embed(hs0[:,:3,:])
+        vp_feat1 = self.feature_embed(hs1[:,:3,:])
+        
+        line_feat0 = torch.cat([hs0[:,3:,:],view0_pooling],dim=2)
+        line_feat1 = torch.cat([hs1[:,3:,:],view1_pooling],dim=2)
+        
+        feat0 = torch.cat([vp_feat0,line_feat0],dim=1)
+        feat1 = torch.cat([vp_feat1,line_feat1],dim=1)
+        
+        feat0, feat1 = self.transformer_block(feat0, feat1)
+        
+        feat0 = self.rotation_conv(feat0)
+        feat1 = self.rotation_conv(feat1)
+        
+        feat = torch.cat([feat0,feat1],dim=1)
+        feat = rearrange(feat, "b l c -> b c l ").contiguous()
+        
+        feat = self.maxpool(feat).squeeze(-1)
         
         # hs0 = hs0 + hs0_pos
         # hs1 = hs1 + hs1_pos
@@ -198,24 +237,23 @@ class CuTiLitModule(LightningModule):
         
         # feat = torch.cat([feat0,feat1],dim=1)
         
-        memory0 = memory0.reshape([batch_size,-1,self.hidden_dim])
-        memory1 = memory1.reshape([batch_size,-1,self.hidden_dim])
-        memory0, memory1 = self.transformer_block(memory0, memory1)
+        # memory0 = memory0.reshape([batch_size,-1,self.hidden_dim])
+        # memory1 = memory1.reshape([batch_size,-1,self.hidden_dim])
+        # memory0, memory1 = self.transformer_block(memory0, memory1)
 
 
 
-        memory0 = rearrange(memory0, "b (h w) c -> b c h w", h=15, w=20).contiguous()
-        memory1 = rearrange(memory1, "b (h w) c -> b c h w", h=15, w=20).contiguous()
+        # memory0 = rearrange(memory0, "b (h w) c -> b c h w", h=15, w=20).contiguous()
+        # memory1 = rearrange(memory1, "b (h w) c -> b c h w", h=15, w=20).contiguous()
 
-        memory0 = self.image_conv(memory0)
-        memory1 = self.image_conv(memory1)
-        memory = torch.cat([memory0, memory1], dim=1)
+        # memory0 = self.image_conv(memory0)
+        # memory1 = self.image_conv(memory1)
+        # memory = torch.cat([memory0, memory1], dim=1)
 
         # feat0, feat1 = self.vptransformer_block(feat0,feat1)
 
-        R = self.rotation_regressor(memory1.reshape([batch_size, -1]))
-        T = self.translation_regressor(memory1.reshape([batch_size, -1]))
-
+        R = self.rotation_regressor(feat)
+        T = self.translation_regressor(feat)
         pose_preds = torch.cat([T, R], dim=1)
 
         return {"pred_pose": self.normalize_preds(pose_preds),
@@ -249,6 +287,20 @@ class CuTiLitModule(LightningModule):
         batch_idx = torch.cat([torch.full_like(tgt, i) for i, (_, tgt) in enumerate(indices)])
         tgt_idx = torch.cat([tgt for (_, tgt) in indices])
         return batch_idx, tgt_idx
+    
+    def endpoints_pooling(self, segs, all_descriptors, img_shape):
+        assert segs.ndim == 4 and segs.shape[-2:] == (2, 2)
+        filter_shape = all_descriptors.shape[-2:]
+        scale_x = filter_shape[1] / img_shape[1]
+        scale_y = filter_shape[0] / img_shape[0]
+
+        scaled_segs = torch.round(segs * torch.tensor([scale_x, scale_y]).to(segs)).long()
+        scaled_segs[..., 0] = torch.clip(scaled_segs[..., 0], 0, filter_shape[1] - 1)
+        scaled_segs[..., 1] = torch.clip(scaled_segs[..., 1], 0, filter_shape[0] - 1)
+        line_descriptors = [all_descriptors[None, b, ..., torch.squeeze(b_segs[..., 1]), torch.squeeze(b_segs[..., 0])]
+                            for b, b_segs in enumerate(scaled_segs)]
+        line_descriptors = torch.cat(line_descriptors)
+        return line_descriptors 
 
 
     def eval_camera(self, predictions):
@@ -315,7 +367,7 @@ class CuTiLitModule(LightningModule):
 
         pred_poses = pred_dict["pred_pose"]
 
-        loss, loss_dict = self.criterion(target_poses, pred_poses)
+        loss, loss_dict = self.criterion(target_poses, pred_poses,vp_loss0,vp_loss1)
 
         return loss, loss_dict, pred_poses, target_poses
 
@@ -325,8 +377,8 @@ class CuTiLitModule(LightningModule):
         self.log("train/loss", loss, on_step=False, on_epoch=True, prog_bar=True)
         self.log("train/loss_tr", loss_dict["loss_tr"], on_step=False, on_epoch=True, prog_bar=True)
         self.log("train/loss_rot", loss_dict["loss_rot"], on_step=False, on_epoch=True, prog_bar=True)
-        # self.log("train/loss_vp0", loss_dict["loss_vp0"], on_step=False, on_epoch=True, prog_bar=True)
-        # self.log("train/loss_vp1", loss_dict["loss_vp1"], on_step=False, on_epoch=True, prog_bar=True)
+        self.log("train/loss_vp0", loss_dict["loss_vp0"], on_step=False, on_epoch=True, prog_bar=True)
+        self.log("train/loss_vp1", loss_dict["loss_vp1"], on_step=False, on_epoch=True, prog_bar=True)
         # self.log("train/acc", acc, on_step=False, on_epoch=True, prog_bar=True)
         # self.manual_backward(loss)
         # # loss.backward()

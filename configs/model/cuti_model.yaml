@@ -19,7 +19,7 @@ ctrlc:
       NUM_QUERIES: 3
       PRE_NORM: False
 
-ctrlc_checkpoint_path: "/home/kmuvcl/source/CTRL-C/logs/checkpoint0099.pth"
+ctrlc_checkpoint_path: "/home/kmuvcl/source/CTRL-C/logs/checkpoint0097.pth"
 
 pos_encoder:
   _target_: src.models.components.position_encoding.PositionEncodingSine1D
@@ -28,7 +28,7 @@ pos_encoder:
 
 transformer:
   _target_: src.models.components.transformer.LocalFeatureTransformer
-  d_model: 256 #512
+  d_model: 768 #512
   nhead: 8
   layer_types: ["self", "cross", "self", "cross", "self", "cross"]
   attention: "linear"
