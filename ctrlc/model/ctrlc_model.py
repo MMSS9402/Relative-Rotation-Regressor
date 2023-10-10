@@ -47,7 +47,7 @@ class GPTran(nn.Module):
         # query embedding은 nn모듈에서 가져다가 쓴다...
         
         self.query_embed = nn.Embedding(num_queries, hidden_dim)
-        self.line_embed = nn.Embedding(512, hidden_dim)
+        # self.line_embed = nn.Embedding(512, hidden_dim)
         line_dim = 3
         if self.use_structure_tensor:
             line_dim = 6
@@ -81,9 +81,9 @@ class GPTran(nn.Module):
             lines = self._to_structure_tensor(lines)
         # src를 projection 시켜서 transformer에 넣어주기
         # 여기서 query embedding에 들어가고, 이게 transformer decoder에 들어갈 때 tgt로 변수명이 표시됩니다.
-        hs, memory = self.transformer(
+        hs, memory, _, _, _ = self.transformer(
             src=self.input_proj(src),
-            mask=mask,
+            mask=None,
             query_embed=self.query_embed.weight,
             tgt=self.input_line_proj(lines),
             tgt_key_padding_mask=lmask,

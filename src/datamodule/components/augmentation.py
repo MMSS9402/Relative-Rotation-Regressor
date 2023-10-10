@@ -31,7 +31,5 @@ class RGBDAugmentor:
         )
 
     def __call__(self, images):
-        print(images[0,:])
         images = self.color_transform(images)
-        print(images[0,:])
         return images

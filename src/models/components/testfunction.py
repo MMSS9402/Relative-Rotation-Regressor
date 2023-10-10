@@ -2,7 +2,7 @@ import cv2
 from tqdm import tqdm
 import numpy as np
 import torch
-import lietorch
+# import lietorch
 import os
 import glob
 import time
@@ -19,7 +19,7 @@ from collections import OrderedDict
 import pickle
 import json
 from typing import Callable
-from lietorch import SE3
+# from lietorch import SE3
 
 
 class Testcamera(Callable):

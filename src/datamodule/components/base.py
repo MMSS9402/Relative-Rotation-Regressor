@@ -1,6 +1,6 @@
 import copy
 import csv
-
+import h5py
 import numpy as np
 import numpy.linalg as LA
 import cv2
@@ -49,6 +49,10 @@ class RGBDDataset(Dataset):
 
     def _build_dataset(self):
         raise NotImplementedError
+    
+    def load_h5py_to_dict(self, file_path):
+        with h5py.File(file_path, 'r') as f:
+            return {key: torch.tensor(f[key][:]) for key in f.keys()}
 
     @staticmethod
     def image_read(image_file):
@@ -151,11 +155,40 @@ class RGBDDataset(Dataset):
         vp_list = self.scene_info['vps'][index]
 
         images = []
+        h5py_path = []
         for i in range(2):
             images.append(self.image_read(images_list[i]))
-            
+            h5py_path.append(self.load_h5py_to_dict(images_list[i].replace(".png", "_sp_line.h5py",)))
         org_img0 = images[0].copy()
         org_img1 = images[1].copy()
+        
+        angle_sublines0 = h5py_path[0]['angle_sublines'][0].float()
+        angles0 = h5py_path[0]['angles'][0].float()
+        desc_sublines0 = h5py_path[0]['desc_sublines'][0].float()
+        klines0 = h5py_path[0]['klines'][0].float()
+        length_klines0 = h5py_path[0]['length_klines'][0].float()
+        mask_sublines0 = h5py_path[0]['mask_sublines'][0].float()
+        mat_klines2sublines0 = h5py_path[0]['mat_klines2sublines'][0].float()
+        num_klns0 = h5py_path[0]['num_klns'][0].float()
+        num_slns0 = h5py_path[0]['num_slns'][0].float()
+        pnt_sublines0 = h5py_path[0]['pnt_sublines'][0].float()
+        resp_sublines0 = h5py_path[0]['resp_sublines'][0].float()
+        score_sublines0 = h5py_path[0]['score_sublines'][0].float()
+        sublines0 = h5py_path[0]['sublines'][0].float()
+        
+        angle_sublines1 = h5py_path[1]['angle_sublines'][0].float()
+        angles1 = h5py_path[1]['angles'][0].float()
+        desc_sublines1 = h5py_path[1]['desc_sublines'][0].float()
+        klines1 = h5py_path[1]['klines'][0].float()
+        length_klines1 = h5py_path[1]['length_klines'][0].float()
+        mask_sublines1 = h5py_path[1]['mask_sublines'][0].float()
+        mat_klines2sublines1 = h5py_path[1]['mat_klines2sublines'][0].float()
+        num_klns1 = h5py_path[1]['num_klns'][0].float()
+        num_slns1 = h5py_path[1]['num_slns'][0].float()
+        pnt_sublines1 = h5py_path[1]['pnt_sublines'][0].float()
+        resp_sublines1 = h5py_path[1]['resp_sublines'][0].float()
+        score_sublines1 = h5py_path[1]['score_sublines'][0].float()
+        sublines1 = h5py_path[1]['sublines'][0].float()
 
         poses = np.stack(poses).astype(np.float32)
         intrinsics = np.stack(intrinsics).astype(np.float32)
@@ -174,9 +207,8 @@ class RGBDDataset(Dataset):
         images[0] = images[0][:,:,::-1].astype(np.float32)
         images[1] = images[1][:,:,::-1].astype(np.float32)
         
-        torch.manual_seed(0)
+
         images[0] = self.augcolor(images[0] / 255.0)
-        torch.manual_seed(0)
         images[1] = self.augcolor(images[1] / 255.0)
         
         images = torch.stack(images)
@@ -200,11 +232,40 @@ class RGBDDataset(Dataset):
             torch.from_numpy(np.ascontiguousarray(line_mask)).contiguous().float()
         )
         
+        target['angle_sublines0'] = angle_sublines0
+        target['angles0'] = angles0
+        target['desc_sublines0'] = desc_sublines0
+        target['klines0'] = klines0
+        target['length_klines0'] = length_klines0
+        target['mask_sublines0'] = mask_sublines0
+        target['mat_klines2sublines0'] = mat_klines2sublines0
+        target['num_klns0'] = num_klns0
+        target['num_slns0'] = num_slns0
+        target['pnt_sublines0'] = pnt_sublines0
+        target['resp_sublines0'] = resp_sublines0
+        target['score_sublines0'] = score_sublines0
+        target['sublines0'] = sublines0
+        
+        target['angle_sublines1'] = angle_sublines1
+        target['angles1'] = angles1
+        target['desc_sublines1'] = desc_sublines1
+        target['klines1'] = klines1
+        target['length_klines1'] = length_klines1
+        target['mask_sublines1'] = mask_sublines1
+        target['mat_klines2sublines1'] = mat_klines2sublines1
+        target['num_klns1'] = num_klns1
+        target['num_slns1'] = num_slns1
+        target['pnt_sublines1'] = pnt_sublines1
+        target['resp_sublines1'] = resp_sublines1
+        target['score_sublines1'] = score_sublines1
+        target['sublines1'] = sublines1
         
         target['org_img0'] = org_img0
         target['org_img1'] = org_img1
         target['img_path0'] = images_list[0]
         target['img_path1'] = images_list[1]
+        target['h5py_path0'] = h5py_path[0]
+        target['h5py_path1'] = h5py_path[1]
         
         return images, lines, target
         
