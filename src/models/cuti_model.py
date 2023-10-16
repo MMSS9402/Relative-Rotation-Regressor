@@ -62,15 +62,16 @@ class CuTiLitModule(LightningModule):
         # also ensures init params will be stored in ckpt
         self.save_hyperparameters()
 
-        # assert os.path.exists(ctrlc_checkpoint_path), "ctrlc checkpoint must be existed!"
-        # ctrlc_checkpoint = torch.load(ctrlc_checkpoint_path)
+        assert os.path.exists(ctrlc_checkpoint_path), "ctrlc checkpoint must be existed!"
+        ctrlc_checkpoint = torch.load(ctrlc_checkpoint_path)
 
         self.predictions = {'camera': {'preds': {'tran': [], 'rot': []}, 'gts': {'tran': [], 'rot': []}}}
         self.vp_loss0 = []
         self.vp_loss1 = []
 
         self.ctrlc: GPTran = build_ctrlc(ctrlc)
-        # self.ctrlc.load_state_dict(ctrlc_checkpoint["model"], strict=False)
+        # self.ctrlc1: GPTran = build_ctrlc(ctrlc)
+        self.ctrlc.load_state_dict(ctrlc_checkpoint["model"], strict=False)
 
         self.thresh_line_pos = np.cos(np.radians(88.0), dtype=np.float32) # near 0.0
         self.thresh_line_neg = np.cos(np.radians(85.0), dtype=np.float32)
@@ -83,28 +84,12 @@ class CuTiLitModule(LightningModule):
         self.vp_embed0 = nn.Embedding(self.num_vp, hidden_dim)
         self.vp_embed1 = nn.Embedding(self.num_vp, hidden_dim)
 
-        self.img0_vp0_embed = nn.Linear(self.hidden_dim, 3)
-        self.img0_vp1_embed = nn.Linear(self.hidden_dim, 3)
-        self.img0_vp2_embed = nn.Linear(self.hidden_dim, 3)
-
-        self.img1_vp0_embed = nn.Linear(self.hidden_dim, 3)
-        self.img1_vp1_embed = nn.Linear(self.hidden_dim, 3)
-        self.img1_vp2_embed = nn.Linear(self.hidden_dim, 3)
-
-        self.input_line_proj = nn.Linear(6, self.hidden_dim)
-
         self.pos_encoder = hydra.utils.instantiate(pos_encoder)
-
-        self.feature_embed = nn.Linear(self.hidden_dim, self.hidden_dim)  # 128
-        
 
         self.image_idx_embedding = nn.Embedding(self.num_image, self.hidden_dim)
         self.line_idx_embedding = nn.Embedding(self.max_num_line, self.hidden_dim)
 
         self.transformer_block = hydra.utils.instantiate(transformer)
-
-        # self.encoder_layer = nn.TransformerEncoderLayer(d_model=2 * self.hidden_dim, nhead=self.num_head)
-        # self.transformer_encoder = nn.TransformerEncoder(self.encoder_layer, num_layers=3)
 
         translation_regressor_dim = 253
         rotation_regressor_dim = 253
@@ -332,9 +317,10 @@ class CuTiLitModule(LightningModule):
         self.log("train/loss_vp1", loss_dict["loss_vp1"], on_step=False, on_epoch=True, prog_bar=True)
         # self.log("train/acc", acc, on_step=False, on_epoch=True, prog_bar=True)
         # print("self.global_step",self.global_step)
-        if self.global_step % 100 == 0:
-            print("pred_dict['pred_view0_vps']",pred_dict['pred_view0_vps'])
-            self.visualize_image(target,vps[0][0],self.global_step,pred_dict['pred_view0_vps'][0])
+
+        # if self.global_step % 100 == 0:
+        #     print("pred_dict['pred_view0_vps']",pred_dict['pred_view0_vps'])
+        #     self.visualize_image(target,vps[0][0],self.global_step,pred_dict['pred_view0_vps'][0])
 
         return loss
     
