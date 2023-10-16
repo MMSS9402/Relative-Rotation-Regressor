@@ -42,7 +42,6 @@ class CuTiLitModule(LightningModule):
             ctrlc: DictConfig,
             ctrlc_checkpoint_path: str,
             # linetr: DictConfig,
-            transformer_encoder: DictConfig,
             transformer: DictConfig,
             pos_encoder: DictConfig,
             max_num_line: int,
@@ -63,15 +62,15 @@ class CuTiLitModule(LightningModule):
         # also ensures init params will be stored in ckpt
         self.save_hyperparameters()
 
-        assert os.path.exists(ctrlc_checkpoint_path), "ctrlc checkpoint must be existed!"
-        ctrlc_checkpoint = torch.load(ctrlc_checkpoint_path)
+        # assert os.path.exists(ctrlc_checkpoint_path), "ctrlc checkpoint must be existed!"
+        # ctrlc_checkpoint = torch.load(ctrlc_checkpoint_path)
 
         self.predictions = {'camera': {'preds': {'tran': [], 'rot': []}, 'gts': {'tran': [], 'rot': []}}}
         self.vp_loss0 = []
         self.vp_loss1 = []
 
         self.ctrlc: GPTran = build_ctrlc(ctrlc)
-        self.ctrlc.load_state_dict(ctrlc_checkpoint["model"], strict=False)
+        # self.ctrlc.load_state_dict(ctrlc_checkpoint["model"], strict=False)
 
         self.thresh_line_pos = np.cos(np.radians(88.0), dtype=np.float32) # near 0.0
         self.thresh_line_neg = np.cos(np.radians(85.0), dtype=np.float32)
@@ -102,8 +101,6 @@ class CuTiLitModule(LightningModule):
         self.image_idx_embedding = nn.Embedding(self.num_image, self.hidden_dim)
         self.line_idx_embedding = nn.Embedding(self.max_num_line, self.hidden_dim)
 
-        # self.transformer_encoder0 = hydra.utils.instantiate(transformer_encoder)
-        # self.transformer_encoder1 = hydra.utils.instantiate(transformer_encoder)
         self.transformer_block = hydra.utils.instantiate(transformer)
 
         # self.encoder_layer = nn.TransformerEncoderLayer(d_model=2 * self.hidden_dim, nhead=self.num_head)
@@ -192,7 +189,6 @@ class CuTiLitModule(LightningModule):
         
         confidence_mat = feat0 @ feat1.transpose(-2,-1)
 
-        import pdb; pdb.set_trace()
 
 
         pred_view0_vps = ctrlc_output0['pred_view_vps']

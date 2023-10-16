@@ -33,19 +33,6 @@ transformer:
   layer_types: ["self", "cross", "self", "cross", "self", "cross"]
   attention: "linear"
 
-
-transformer_encoder:
-  _target_: src.models.components.transformer.TransformerEncoder
-  encoder_layer:
-    _target_: src.models.components.transformer.TransformerEncoderLayer
-    d_model : 256
-    nhead : 8
-    dim_feedforward : 2048
-    dropout : 0.1
-    normalize_before : False
-  num_layers : 6
-
-
 max_num_line: 512
 hidden_dim: 256 #512
 pool_channels: [32, 16]
