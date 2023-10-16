@@ -1,40 +1,25 @@
 _target_: src.models.cuti_model.CuTiLitModule
 
-# ctrlc:
-#   MODELS:
-#     BACKBONE: 'resnet50'
-#     DILATION: False
-#     POSITION_EMBEDDING: 'sine'
-#     MASKS: False
-#     FROZEN_WEIGHT: None
-#     USE_STRUCTURE_TENSOR: True
+ctrlc:
+  MODELS:
+    BACKBONE: 'resnet50'
+    DILATION: False
+    POSITION_EMBEDDING: 'sine'
+    MASKS: False
+    FROZEN_WEIGHT: None
+    USE_STRUCTURE_TENSOR: True
 
-#     TRANSFORMER:
-#       ENC_LAYERS: 6
-#       DEC_LAYERS: 6
-#       DIM_FEEDFORWARD: 2048
-#       HIDDEN_DIM: 256 # 128
-#       DROPOUT: 0.0
-#       NHEADS: 8
-#       NUM_QUERIES: 3
-#       PRE_NORM: False
+    TRANSFORMER:
+      ENC_LAYERS: 6
+      DEC_LAYERS: 6
+      DIM_FEEDFORWARD: 2048
+      HIDDEN_DIM: 256 # 128
+      DROPOUT: 0.1
+      NHEADS: 8
+      NUM_QUERIES: 3
+      PRE_NORM: False
 
-linetr_checkpoint_path: '/home/kmuvcl/source/CuTi/src/datamodule/components/weights/LineTR_weight.pth'
-
-linetr:
-  _target_: src.models.components.line_transformer.LineTransformer
-  image_shape: [480,640]   # height, width
-  min_length: 16
-  token_distance: 8
-  max_tokens: 21
-  remove_borders: 1
-  max_keylines: -1
-
-  descriptor_dim: 256
-  keyline_encoder: [32, 64, 128, 256]
-  n_heads: 4
-  n_line_descriptive_layers: 12
-  d_inner: 1024  
+ctrlc_checkpoint_path: "/home/kmuvcl/CTRL-C/desc+structure/checkpoint0052.pth"
 
 pos_encoder:
   _target_: src.models.components.position_encoding.PositionEncodingSine1D
@@ -59,13 +44,6 @@ transformer_encoder:
     dropout : 0.1
     normalize_before : False
   num_layers : 6
-
-vptransformer:
-  _target_: src.models.components.vp_transformer.VPTransformer
-  d_model: 256 #512
-  nhead: 8
-  layer_types: ["vpcross"]
-  attention: "bilinear"
 
 
 max_num_line: 512
@@ -98,8 +76,8 @@ matcher:
 
 optimizer:
   _target_: torch.optim.Adam
-  lr: 1e-5
-  weight_decay: 1e-3
+  lr: 1e-4
+  weight_decay: 1e-4
 
 scheduler:
   _target_: torch.optim.lr_scheduler.ReduceLROnPlateau

@@ -1,6 +1,7 @@
 from typing import Any, List, Optional
 import sys
 import os
+import os.path as osp
 import time
 import wandb
 import h5py
@@ -31,15 +32,18 @@ from src.utils.generate_epipolar_image import (generate_epipolar_image,
                                                )
 
 
+import matplotlib as mpl
+import matplotlib.pyplot as plt
+
+
 class CuTiLitModule(LightningModule):
     def __init__(
             self,
             ctrlc: DictConfig,
-            linetr_checkpoint_path: str,
-            linetr: DictConfig,
+            ctrlc_checkpoint_path: str,
+            # linetr: DictConfig,
             transformer_encoder: DictConfig,
             transformer: DictConfig,
-            vptransformer: DictConfig,
             pos_encoder: DictConfig,
             max_num_line: int,
             hidden_dim: int,
@@ -59,18 +63,16 @@ class CuTiLitModule(LightningModule):
         # also ensures init params will be stored in ckpt
         self.save_hyperparameters()
 
-        # assert os.path.exists(ctrlc_checkpoint_path), "ctrlc checkpoint must be existed!"
-        # ctrlc_checkpoint = torch.load(ctrlc_checkpoint_path)
+        assert os.path.exists(ctrlc_checkpoint_path), "ctrlc checkpoint must be existed!"
+        ctrlc_checkpoint = torch.load(ctrlc_checkpoint_path)
 
         self.predictions = {'camera': {'preds': {'tran': [], 'rot': []}, 'gts': {'tran': [], 'rot': []}}}
         self.vp_loss0 = []
         self.vp_loss1 = []
+
         self.ctrlc: GPTran = build_ctrlc(ctrlc)
-        
-        # self.ctrlc.load_state_dict(ctrlc_checkpoint["model"], strict=True)
-        
-        # self.ctrlc.requires_grad_(False)
-        # self.ctrlc.eval()
+        self.ctrlc.load_state_dict(ctrlc_checkpoint["model"], strict=False)
+
         self.thresh_line_pos = np.cos(np.radians(88.0), dtype=np.float32) # near 0.0
         self.thresh_line_neg = np.cos(np.radians(85.0), dtype=np.float32)
 
@@ -82,39 +84,41 @@ class CuTiLitModule(LightningModule):
         self.vp_embed0 = nn.Embedding(self.num_vp, hidden_dim)
         self.vp_embed1 = nn.Embedding(self.num_vp, hidden_dim)
 
-        self.img0_vp0_class_embed = nn.Linear(self.hidden_dim, 3)
-        self.img0_vp1_class_embed = nn.Linear(self.hidden_dim, 3)
-        self.img0_vp2_class_embed = nn.Linear(self.hidden_dim, 3)
+        self.img0_vp0_embed = nn.Linear(self.hidden_dim, 3)
+        self.img0_vp1_embed = nn.Linear(self.hidden_dim, 3)
+        self.img0_vp2_embed = nn.Linear(self.hidden_dim, 3)
 
-        self.img1_vp0_class_embed = nn.Linear(self.hidden_dim, 3)
-        self.img1_vp1_class_embed = nn.Linear(self.hidden_dim, 3)
-        self.img1_vp2_class_embed = nn.Linear(self.hidden_dim, 3)
+        self.img1_vp0_embed = nn.Linear(self.hidden_dim, 3)
+        self.img1_vp1_embed = nn.Linear(self.hidden_dim, 3)
+        self.img1_vp2_embed = nn.Linear(self.hidden_dim, 3)
+
+        self.input_line_proj = nn.Linear(6, self.hidden_dim)
 
         self.pos_encoder = hydra.utils.instantiate(pos_encoder)
-        
-        self.linetr = hydra.utils.instantiate(linetr)
-        linetr_checkpoint = torch.load(linetr_checkpoint_path)
-        # self.linetr.load_state_dict(linetr_checkpoint, strict=False)
-        # self.linetr.requires_grad_(False)
-        # self.linetr.eval()
-    
 
         self.feature_embed = nn.Linear(self.hidden_dim, self.hidden_dim)  # 128
+        
 
         self.image_idx_embedding = nn.Embedding(self.num_image, self.hidden_dim)
         self.line_idx_embedding = nn.Embedding(self.max_num_line, self.hidden_dim)
 
-        self.transformer_encoder = hydra.utils.instantiate(transformer_encoder)
+        # self.transformer_encoder0 = hydra.utils.instantiate(transformer_encoder)
+        # self.transformer_encoder1 = hydra.utils.instantiate(transformer_encoder)
         self.transformer_block = hydra.utils.instantiate(transformer)
-        # self.vptransformer_block = hydra.utils.instantiate(vptransformer)
 
         # self.encoder_layer = nn.TransformerEncoderLayer(d_model=2 * self.hidden_dim, nhead=self.num_head)
         # self.transformer_encoder = nn.TransformerEncoder(self.encoder_layer, num_layers=3)
 
-        translation_regressor_dim = 3 * int(250)
-        rotation_regressor_dim = 3 * int(250)
-        in_channels = 2 * self.hidden_dim
+        translation_regressor_dim = 253
+        rotation_regressor_dim = 253
+        in_channels = 253
         self.translation_regressor = nn.Sequential(
+            nn.Conv1d(in_channels, in_channels, kernel_size=1, stride=1, padding=0, bias=False),
+            nn.ReLU(),
+            nn.Conv1d(in_channels, in_channels, kernel_size=1, stride=1, padding=0, bias=False),
+            nn.ReLU(),
+            nn.Conv1d(in_channels, 1, kernel_size=1, stride=1, padding=0, bias=False),
+            nn.ReLU(),
             nn.Linear(translation_regressor_dim, translation_regressor_dim),
             nn.ReLU(),
             nn.Linear(translation_regressor_dim, translation_regressor_dim),
@@ -122,6 +126,12 @@ class CuTiLitModule(LightningModule):
             nn.Linear(translation_regressor_dim, 3),
         )
         self.rotation_regressor = nn.Sequential(
+            nn.Conv1d(in_channels, in_channels, kernel_size=1, stride=1, padding=0, bias=False),
+            nn.ReLU(),
+            nn.Conv1d(in_channels, in_channels, kernel_size=1, stride=1, padding=0, bias=False),
+            nn.ReLU(),
+            nn.Conv1d(in_channels, 1, kernel_size=1, stride=1, padding=0, bias=False),
+            nn.ReLU(),
             nn.Linear(rotation_regressor_dim, rotation_regressor_dim),
             nn.ReLU(),
             nn.Linear(rotation_regressor_dim, rotation_regressor_dim),
@@ -151,57 +161,42 @@ class CuTiLitModule(LightningModule):
         self.scheduler = scheduler
         self.automatic_optimization = False
 
-    def forward(self, images: torch.Tensor, lines: torch.Tensor, target):
+    def forward(self, images: torch.Tensor, target):
         endpoint = target['endpoint']
-        lmask = target['line_mask']
         vps = rearrange(target['vps'], "b i l c -> i b l c ").contiguous()
         batch_size = vps.shape[1]
 
-        vp_embed0 = self.vp_embed0.weight.unsqueeze(1).repeat(1, batch_size, 1)
-        vp_embed1 = self.vp_embed1.weight.unsqueeze(1).repeat(1, batch_size, 1)
+        normal0 = target['normal0']
+        normal1 = target['normal1']
 
-        vp_embed0 = rearrange(vp_embed0,"v b n -> b v n").contiguous()
-        vp_embed1 = rearrange(vp_embed1,"v b n -> b v n").contiguous()
+        desc0 = target['desc_sublines0'] # [10, 250, 21, 256] [b line pointm channel]
+        desc1 = target['desc_sublines1']
+
+
+        desc0 = rearrange(desc0,'b l p c -> (b l) c p').contiguous()
+        desc0 = F.max_pool1d(desc0, kernel_size=21, stride=1)
+        desc0 = rearrange(desc0, '(b l) c p -> b l p c',l=250,b=batch_size).contiguous().squeeze(2)
+
+        desc1 = rearrange(desc1,'b l p c -> (b l) c p').contiguous()
+        desc1 = F.max_pool1d(desc1, kernel_size=21, stride=1)
+        desc1 = rearrange(desc1, '(b l) c p -> b l p c',l=250,b=batch_size).contiguous().squeeze(2)
+
+
+        hs0, ctrlc_output0 = self.ctrlc(normal0,desc0)
+        hs1, ctrlc_output1 = self.ctrlc(normal1,desc1)
+
+        hs0[:,3:,:] = hs0[:,3:,:] + desc0
+        hs1[:,3:,:] = hs1[:,3:,:] + desc1 
+
+        feat0,feat1 = self.transformer_block(hs0,hs1)
         
-        target = self.linetr(target,img_idx=0)
-        target = self.linetr(target,img_idx=1)
-        
-        line_desc0 = target['line_desc0']
-        line_desc1 = target['line_desc1']
-        line_desc0 = rearrange(line_desc0,"b c n -> b n c").contiguous()
-        line_desc1 = rearrange(line_desc1,"b c n -> b n c").contiguous()
+        confidence_mat = feat0 @ feat1.transpose(-2,-1)
 
-        line_desc0 = torch.cat([vp_embed0,line_desc0],dim=1)
-        line_desc1 = torch.cat([vp_embed1,line_desc1],dim=1)
+        import pdb; pdb.set_trace()
 
-        feat0,feat1 = self.transformer_block(line_desc0,line_desc1)
-        
-        pred_view0_vp0 = self.img0_vp0_class_embed(feat0[:,0,:])
-        pred_view0_vp1 = self.img0_vp1_class_embed(feat0[:,1,:])
-        pred_view0_vp2 = self.img0_vp2_class_embed(feat0[:,2,:])
 
-        pred_view1_vp0 = self.img1_vp0_class_embed(feat1[:,0,:])
-        pred_view1_vp1 = self.img1_vp1_class_embed(feat1[:,1,:])
-        pred_view1_vp2 = self.img1_vp2_class_embed(feat1[:,2,:])
-
-        pred_view0_vps = torch.cat([pred_view0_vp0.unsqueeze(1),
-                                    pred_view0_vp1.unsqueeze(1),
-                                    pred_view0_vp2.unsqueeze(1)], dim=1)
-        pred_view1_vps = torch.cat([pred_view1_vp0.unsqueeze(1),
-                                    pred_view1_vp1.unsqueeze(1),
-                                    pred_view1_vp2.unsqueeze(1)], dim=1)
-
-        # import pdb; pdb.set_trace()
-        # feat = torch.cat([feat0,feat1],dim=2)
-        # feat = rearrange(feat, "b n c -> b c n").contiguous()
-        # feat = self.line_conv(feat)
-        # feat = rearrange(feat, "b c n  -> b (c n)").contiguous()
-
-        # R = self.rotation_regressor(feat)
-        # T = self.translation_regressor(feat)
-        # pose_preds = torch.cat([T, R], dim=1)
-
-        
+        pred_view0_vps = ctrlc_output0['pred_view_vps']
+        pred_view1_vps = ctrlc_output1['pred_view_vps']
         return {#"pred_pose": self.normalize_preds(pose_preds),
                 "pred_view0_vps": pred_view0_vps,
                 "pred_view1_vps": pred_view1_vps,
@@ -252,6 +247,9 @@ class CuTiLitModule(LightningModule):
         line_descriptors = torch.cat(line_descriptors)
         return line_descriptors 
 
+    def _to_structure_tensor(self, params):
+            (a, b, c) = torch.unbind(params, dim=-1)
+            return torch.stack([a * a, a * b, b * b, b * c, c * c, c * a], dim=-1)
 
     def eval_camera(self, predictions):
         acc_threshold = {
@@ -301,11 +299,11 @@ class CuTiLitModule(LightningModule):
         pass
 
     def shared_step(self, batch: Any):
-        images, lines, target = batch
+        images, target = batch
         # target_poses = SE3(target['poses'])
         target_poses = target['poses']
 
-        pred_dict = self.forward(images, lines, target)
+        pred_dict = self.forward(images, target)
 
         vps = rearrange(target['vps'], "b i l c -> i b l c ").contiguous()
 
@@ -317,26 +315,54 @@ class CuTiLitModule(LightningModule):
 
         # pred_poses = pred_dict["pred_pose"]
 
-        loss = (vp_loss0 + vp_loss1)/2
+        loss = (vp_loss0 + vp_loss1)
+        loss_dict = {'loss_vp0':vp_loss0, 'loss_vp1': vp_loss1}
 
         # loss, loss_dict = self.criterion(target_poses, pred_poses)
 
         # return loss, loss_dict, pred_poses, target_poses
-        return loss
+        return loss, loss_dict, pred_dict, target
 
     def training_step(self, batch: Any, batch_idx: int):
         # loss, loss_dict, preds, target_pose = self.shared_step(batch)
-        loss = self.shared_step(batch)
+        loss, loss_dict, pred_dict, target = self.shared_step(batch)
+        vps = rearrange(target['vps'], "b i l c -> i b l c ").contiguous()
         # update and log metrics
         self.log('loss', loss, on_step=True, prog_bar=True)
         self.log("train/loss", loss, on_step=False, on_epoch=True, prog_bar=True)
         # self.log("train/loss_tr", loss_dict["loss_tr"], on_step=False, on_epoch=True, prog_bar=True)
         # self.log("train/loss_rot", loss_dict["loss_rot"], on_step=False, on_epoch=True, prog_bar=True)
-        # self.log("train/loss_vp0", loss_dict["loss_vp0"], on_step=False, on_epoch=True, prog_bar=True)
-        # self.log("train/loss_vp1", loss_dict["loss_vp1"], on_step=False, on_epoch=True, prog_bar=True)
+        self.log("train/loss_vp0", loss_dict["loss_vp0"], on_step=False, on_epoch=True, prog_bar=True)
+        self.log("train/loss_vp1", loss_dict["loss_vp1"], on_step=False, on_epoch=True, prog_bar=True)
         # self.log("train/acc", acc, on_step=False, on_epoch=True, prog_bar=True)
+        # print("self.global_step",self.global_step)
+        if self.global_step % 100 == 0:
+            print("pred_dict['pred_view0_vps']",pred_dict['pred_view0_vps'])
+            self.visualize_image(target,vps[0][0],self.global_step,pred_dict['pred_view0_vps'][0])
 
         return loss
+    
+    def visualize_image(self,target, vps, global_step,pred_vp):
+        img0 = target['org_img0'][0].cpu().numpy()
+        file_dir = os.path.dirname(osp.join('.vis/'))
+        if not os.path.exists(file_dir):
+            os.makedirs(file_dir)
+        plt.figure(figsize=(4,3))
+        plt.imshow(img0, extent=[-320/517.97,320/517.97, -240/517.97, 240/517.97])                 
+        plt.plot((0, vps[0][0]), (0, vps[0][1]), 'r-', alpha=1.0)
+        plt.plot((0, vps[1][0]), (0, vps[1][1]), 'r-', alpha=1.0)
+        plt.plot((0, vps[2][0]), (0, vps[2][1]), 'r-', alpha=1.0)
+        plt.plot((0, pred_vp[0][0]), (0, pred_vp[0][1]), 'g-', alpha=1.0)
+        plt.plot((0, pred_vp[1][0]), (0, pred_vp[1][1]), 'g-', alpha=1.0)
+        plt.plot((0, pred_vp[2][0]), (0, pred_vp[2][1]), 'g-', alpha=1.0)
+        #plt.plot((0, pred_vp1[0]), (0, pred_vp1[1]), 'g-', alpha=1.0)  
+        plt.xlim(-320/517.97,320/517.97)
+        plt.ylim(-240/517.97,240/517.97)
+        #plt.axis('off')
+        plt.savefig(osp.join(file_dir,str(global_step)+'jpg'),
+                    pad_inches=0, bbox_inches='tight')
+        plt.close('all')
+
 
     def train_epoch_end(self, outputs: List[Any]):
         for name, param in self.named_parameters():
@@ -344,12 +370,14 @@ class CuTiLitModule(LightningModule):
                 print(name, param.grad)
 
     def validation_step(self, batch: Any, batch_idx: int):
-        loss, loss_dict, preds, target_pose = self.shared_step(batch)
+        loss, loss_dict, pred_dict, target = self.shared_step(batch)
 
         # update and log metrics
         self.log("val/loss", loss, on_step=False, on_epoch=True, prog_bar=True)
-        self.log("val/loss_tr", loss_dict["loss_tr"], on_step=False, on_epoch=True, prog_bar=True)
-        self.log("val/loss_rot", loss_dict["loss_rot"], on_step=False, on_epoch=True, prog_bar=True)
+        self.log("val/loss_vp0", loss_dict["loss_vp0"], on_step=False, on_epoch=True, prog_bar=True)
+        self.log("val/loss_vp1", loss_dict["loss_vp1"], on_step=False, on_epoch=True, prog_bar=True)
+        # self.log("val/loss_tr", loss_dict["loss_tr"], on_step=False, on_epoch=True, prog_bar=True)
+        # self.log("val/loss_rot", loss_dict["loss_rot"], on_step=False, on_epoch=True, prog_bar=True)
         # self.log("val/acc", acc, on_step=False, on_epoch=True, prog_bar=True)
 
         # visualization
@@ -377,34 +405,34 @@ class CuTiLitModule(LightningModule):
         pass
 
     def test_step(self, batch: Any, batch_idx: int):
-        images, lines, target = batch
+        images, target = batch
         vps = rearrange(target['vps'], "b i l c -> i b l c ").contiguous()
 
-        pred_dict = self.forward(images, lines, target)
+        pred_dict = self.forward(images, target)
 
-        # index0 = self.matcher(pred_dict["pred_view0_vps"], vps[0])
-        # index1 = self.matcher(pred_dict["pred_view1_vps"], vps[1])
+        index0 = self.matcher(pred_dict["pred_view0_vps"], vps[0])
+        index1 = self.matcher(pred_dict["pred_view1_vps"], vps[1])
 
-        # vp_loss0 = self.vp_criterion(pred_dict["pred_view0_vps"], vps[0], index0)
-        # vp_loss1 = self.vp_criterion(pred_dict["pred_view1_vps"], vps[1], index1)
+        vp_loss0 = self.vp_criterion(pred_dict["pred_view0_vps"], vps[0], index0)
+        vp_loss1 = self.vp_criterion(pred_dict["pred_view1_vps"], vps[1], index1)
 
-        # self.vp_loss0.append(vp_loss0.tolist())
-        # self.vp_loss1.append(vp_loss1.tolist())
+        self.vp_loss0.append(vp_loss0.tolist())
+        self.vp_loss1.append(vp_loss1.tolist())
 
         predictions = self.test_camera(target['poses'], pred_dict["pred_pose"], self.predictions)
 
-        return predictions#, self.vp_loss0, self.vp_loss1
+        return predictions, self.vp_loss0, self.vp_loss1
 
     def test_epoch_end(self, outputs: List[Any]):
         predictions = outputs[0]
-        # vp_loss0 = outputs[0][1]
-        # vp_loss1 = outputs[0][2]
-        # print("vp0 average loss : ", sum(vp_loss0) / len(vp_loss0))
-        # print("vp0 max loss : ", max(vp_loss0))
-        # print("vp0 min loss : ", min(vp_loss0))
-        # print("vp1 average loss : ", sum(vp_loss1) / len(vp_loss1))
-        # print("vp1 max loss : ", max(vp_loss1))
-        # print("vp1 min loss : ", min(vp_loss1))
+        vp_loss0 = outputs[0][1]
+        vp_loss1 = outputs[0][2]
+        print("vp0 average loss : ", sum(vp_loss0) / len(vp_loss0))
+        print("vp0 max loss : ", max(vp_loss0))
+        print("vp0 min loss : ", min(vp_loss0))
+        print("vp1 average loss : ", sum(vp_loss1) / len(vp_loss1))
+        print("vp1 max loss : ", max(vp_loss1))
+        print("vp1 min loss : ", min(vp_loss1))
         camera_metrics = self.eval_camera(predictions)
 
         for k in camera_metrics:

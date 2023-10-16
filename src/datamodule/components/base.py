@@ -70,23 +70,6 @@ class RGBDDataset(Dataset):
         segs = segs[lengths > min_line_length]
         return segs
 
-    def normalize_safe_np(self, v, axis=-1, eps=1e-6):
-        de = LA.norm(v, axis=axis, keepdims=True)
-        de = np.maximum(de, eps)
-        return v / de
-
-    def segs2lines_np(self, segs):
-        ones = np.ones(len(segs))
-        ones = np.expand_dims(ones, axis=-1)
-        p1 = np.concatenate([segs[:, :2], ones], axis=-1)
-        p2 = np.concatenate([segs[:, 2:], ones], axis=-1)
-        lines = np.cross(p1, p2)
-        return self.normalize_safe_np(lines)
-
-    def normalize_segs(self, lines, pp, rho=517.97):
-        pp = np.array([pp[0], pp[1], pp[0], pp[1]], dtype=np.float32)
-        return (lines - pp)/rho
-
     def sample_segs_np(self, segs, num_sample):
         num_segs = len(segs)
         sampled_segs = np.zeros([num_sample, 4], dtype=np.float32)
@@ -107,6 +90,23 @@ class RGBDDataset(Dataset):
         segs[:, 1] = -segs[:, 1]
         segs[:, 3] = -segs[:, 3]
         return (H + segs)
+    
+    def normalize_segs(self,lines, pp, rho=517.97):
+        pp = np.array([pp[0], pp[1], pp[0], pp[1]], dtype=np.float32)
+        return (lines - pp)/rho
+    
+    def normalize_safe_np(self,v, axis=-1, eps=1e-6):
+        de = LA.norm(v, axis=axis, keepdims=True)
+        de = np.maximum(de, eps)
+        return v / de
+    
+    def segs2lines_np(self,segs):
+        ones = np.ones(len(segs))
+        ones = np.expand_dims(ones, axis=-1)
+        p1 = np.concatenate([segs[:, :2], -ones], axis=-1)
+        p2 = np.concatenate([segs[:, 2:], -ones], axis=-1)
+        lines = np.cross(p1, p2)
+        return self.normalize_safe_np(lines)
 
     def process_geometry(self, images, poses, intrinsics, lines, vps):
         endpoint = []
@@ -151,14 +151,16 @@ class RGBDDataset(Dataset):
         images_list = self.scene_info["images"][index]
         poses = self.scene_info["poses"][index]
         intrinsics = self.scene_info["intrinsics"][index]
-        lines_list = self.scene_info["lines"][index]
+        # lines_list = self.scene_info["lines"][index]
         vp_list = self.scene_info['vps'][index]
 
         images = []
         h5py_path = []
+        
         for i in range(2):
             images.append(self.image_read(images_list[i]))
             h5py_path.append(self.load_h5py_to_dict(images_list[i].replace(".png", "_sp_line.h5py",)))
+        
         org_img0 = images[0].copy()
         org_img1 = images[1].copy()
         
@@ -175,6 +177,7 @@ class RGBDDataset(Dataset):
         resp_sublines0 = h5py_path[0]['resp_sublines'][0].float()
         score_sublines0 = h5py_path[0]['score_sublines'][0].float()
         sublines0 = h5py_path[0]['sublines'][0].float()
+        num_segs = sublines0.shape[0]
         
         angle_sublines1 = h5py_path[1]['angle_sublines'][0].float()
         angles1 = h5py_path[1]['angles'][0].float()
@@ -198,7 +201,7 @@ class RGBDDataset(Dataset):
 
         poses = torch.from_numpy(poses)
         intrinsics = torch.from_numpy(intrinsics)
-        lines = copy.deepcopy(lines_list)
+        # lines = copy.deepcopy(lines_list)
 
         vps = []
         for i in range(2):
@@ -212,9 +215,22 @@ class RGBDDataset(Dataset):
         images[1] = self.augcolor(images[1] / 255.0)
         
         images = torch.stack(images)
-        
-        images, poses, intrinsics, lines, vps, endpoint, line_mask = self.process_geometry(
-            images, poses, intrinsics, lines, vps)
+
+        height, width = images[0].shape[-2],images[0].shape[-1]
+        pp = (width / 2, height / 2)
+        rho = 517.97
+
+        lines0 = np.copy(sublines0.reshape(num_segs,-1).numpy())
+        lines0 = self.coordinate_yup(lines0,height)
+        lines0 = self.normalize_segs(lines0, pp=pp, rho=rho)
+        normal0 = np.copy(lines0)
+        normal0 = self.segs2lines_np(normal0)
+
+        lines1 = np.copy(sublines1.reshape(num_segs,-1).numpy())
+        lines1 = self.coordinate_yup(lines1,height)
+        lines1 = self.normalize_segs(lines1, pp=pp, rho=rho)
+        normal1 = np.copy(lines1)
+        normal1 = self.segs2lines_np(normal1)
         
         target['vps'] = (
             torch.from_numpy(np.ascontiguousarray(vps)).contiguous().float()
@@ -223,15 +239,24 @@ class RGBDDataset(Dataset):
             torch.from_numpy(np.ascontiguousarray(poses)).contiguous().float()
         )
         target['endpoint'] = (
-            torch.from_numpy(np.ascontiguousarray(endpoint)).contiguous().float()
+            torch.from_numpy(np.ascontiguousarray(lines1)).contiguous().float()
         )
         target['intrinsics'] = (
             torch.from_numpy(np.ascontiguousarray(intrinsics)).contiguous().float()
         )
-        target['line_mask'] = (
-            torch.from_numpy(np.ascontiguousarray(line_mask)).contiguous().float()
+        target['normal0'] = (
+            torch.from_numpy(np.ascontiguousarray(normal0)).contiguous().float()
+        )  
+        target['normal1'] = (
+            torch.from_numpy(np.ascontiguousarray(normal1)).contiguous().float()
         )
-        
+        target['lines0'] = (
+            torch.from_numpy(np.ascontiguousarray(lines0)).contiguous().float()
+        )
+        target['lines1'] = (
+            torch.from_numpy(np.ascontiguousarray(lines1)).contiguous().float()
+        )
+
         target['angle_sublines0'] = angle_sublines0
         target['angles0'] = angles0
         target['desc_sublines0'] = desc_sublines0
@@ -267,7 +292,7 @@ class RGBDDataset(Dataset):
         target['h5py_path0'] = h5py_path[0]
         target['h5py_path1'] = h5py_path[1]
         
-        return images, lines, target
+        return images , target
         
 
     def __len__(self):

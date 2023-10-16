@@ -61,7 +61,7 @@ class MatterportDataset(RGBDDataset):
             lines = []
             for img_idx in ["0", "1"]:
                 img_path = data[img_idx]["file_name"].replace(original_basepath, self.data_path)
-                line_path = img_path.replace(".png", "_line.csv",)
+                # line_path = img_path.replace(".png", "_line.csv",)
 
                 vp1 = data[img_idx]['vp1']
                 vp2 = data[img_idx]['vp2']
@@ -71,7 +71,7 @@ class MatterportDataset(RGBDDataset):
                 vps.append(gt_vps)
 
                 images.append(img_path)
-                lines.append(self.read_line_file(line_path, min_line_length=10))
+                # lines.append(self.read_line_file(line_path, min_line_length=10))
 
             rel_pose = np.array(data["rel_pose"]["position"] + data["rel_pose"]["rotation"])
 
@@ -91,7 +91,7 @@ class MatterportDataset(RGBDDataset):
             )  # 480 x 640 imgs
 
             images_list.append(images)
-            lines_list.append(lines)
+            # lines_list.append(lines)
             vps_list.append(vps)
             poses_list.append(poses)
             intrinsics_list.append(intrinsics)
@@ -100,7 +100,7 @@ class MatterportDataset(RGBDDataset):
             "images": images_list,
             "poses": poses_list,
             "intrinsics": intrinsics_list,
-            "lines": lines_list,
+            # "lines": lines_list,
             'vps': vps_list,
         }
         return scene_info

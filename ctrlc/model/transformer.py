@@ -59,16 +59,18 @@ class Transformer(nn.Module):
         query_pos = torch.cat([query_embed, torch.zeros_like(tgt)], dim=0)
         #query_pos = torch.cat([query_embed, line_embed], dim=0)
         tgt = torch.cat([torch.zeros_like(query_embed), tgt], dim=0) # [n, bs, ch]
-        tgt_key_padding_mask = torch.cat([torch.zeros(bs, query_embed.size(0), dtype=torch.bool, device=query_embed.device), tgt_key_padding_mask], dim=1)
+        # tgt_key_padding_mask = torch.cat([torch.zeros(bs, query_embed.size(0), dtype=torch.bool, device=query_embed.device), tgt_key_padding_mask], dim=1)
         # mask = mask.flatten(1)
-
+        
         memory, enc_attns = self.encoder(src, src_key_padding_mask=None, pos=pos_embed)
+
         
         hs, dec_self_attns, dec_cross_attns = self.decoder(tgt, memory,
-                                            tgt_key_padding_mask=tgt_key_padding_mask,
-                                            memory_key_padding_mask=mask,
+                                            tgt_key_padding_mask=None,
+                                            memory_key_padding_mask=None,
                                             pos=pos_embed, 
                                             query_pos=query_pos)
+
         # enc_attn_weights [enc_ayer, bs, nhead, h*w, h*w]
         # dec_attn_weights [dec_ayer, bs, nhead, n_qeury, h*w]
 
@@ -105,7 +107,6 @@ class TransformerEncoder(nn.Module):
                            src_key_padding_mask=src_key_padding_mask, pos=pos)
             attn_weights.append(attn_weight)
         attn_weights = torch.stack(attn_weights)
-
         if self.norm is not None:
             output = self.norm(output)
 
@@ -190,15 +191,14 @@ class TransformerEncoderLayer(nn.Module):
                      src_key_padding_mask: Optional[Tensor] = None,
                      pos: Optional[Tensor] = None):
         q = k = self.with_pos_embed(src, pos)
-        src2, attn_weight = self.self_attn(q, k, value=src, attn_mask=src_mask,
-                              key_padding_mask=src_key_padding_mask)
-
+        src2, attn_weight = self.self_attn(q, k, value=src, attn_mask=None,
+                              key_padding_mask=None)
+        
         src = src + self.dropout1(src2)
         src = self.norm1(src)
         src2 = self.linear2(self.dropout(self.activation(self.linear1(src))))
         src = src + self.dropout2(src2)
         src = self.norm2(src)
-
         return src, attn_weight # post
 
     def forward_pre(self, src,
@@ -207,13 +207,12 @@ class TransformerEncoderLayer(nn.Module):
                     pos: Optional[Tensor] = None):
         src2 = self.norm1(src)
         q = k = self.with_pos_embed(src2, pos)
-        src2, attn_weight = self.self_attn(q, k, value=src2, attn_mask=src_mask,
-                              key_padding_mask=src_key_padding_mask)
+        src2, attn_weight = self.self_attn(q, k, value=src2, attn_mask=None,
+                              key_padding_mask=None)
         src = src + self.dropout1(src2)
         src2 = self.norm2(src)
         src2 = self.linear2(self.dropout(self.activation(self.linear1(src2))))
         src = src + self.dropout2(src2)
-
         return src, attn_weight # pre
 
     def forward(self, src,
@@ -266,8 +265,8 @@ class TransformerDecoderLayer(nn.Module):
         tgt = self.norm1(tgt)
         tgt2, cross_attn_weight = self.multihead_attn(query=self.with_pos_embed(tgt, query_pos),
                                    key=self.with_pos_embed(memory, pos),
-                                   value=memory, attn_mask=memory_mask,
-                                   key_padding_mask=memory_key_padding_mask)
+                                   value=memory, attn_mask=None,
+                                   key_padding_mask=None)
         tgt = tgt + self.dropout2(tgt2)
         tgt = self.norm2(tgt)
         tgt2 = self.linear2(self.dropout(self.activation(self.linear1(tgt))))
@@ -284,14 +283,14 @@ class TransformerDecoderLayer(nn.Module):
                     query_pos: Optional[Tensor] = None):
         tgt2 = self.norm1(tgt)
         q = k = self.with_pos_embed(tgt2, query_pos)
-        tgt2, self_attn_weight = self.self_attn(q, k, value=tgt2, attn_mask=tgt_mask,
-                              key_padding_mask=tgt_key_padding_mask)
+        tgt2, self_attn_weight = self.self_attn(q, k, value=tgt2, attn_mask=None,
+                              key_padding_mask=None)
         tgt = tgt + self.dropout1(tgt2)
         tgt2 = self.norm2(tgt)
         tgt2, cross_attn_weight = self.multihead_attn(query=self.with_pos_embed(tgt2, query_pos),
                                    key=self.with_pos_embed(memory, pos),
-                                   value=memory, attn_mask=memory_mask,
-                                   key_padding_mask=memory_key_padding_mask)
+                                   value=memory, attn_mask=None,
+                                   key_padding_mask=None)
         tgt = tgt + self.dropout2(tgt2)
         tgt2 = self.norm3(tgt)
         tgt2 = self.linear2(self.dropout(self.activation(self.linear1(tgt2))))
@@ -315,17 +314,15 @@ class TransformerDecoderLayer(nn.Module):
 def _get_clones(module, N):
     return nn.ModuleList([copy.deepcopy(module) for i in range(N)])
 
-
 def build_transformer(cfg):
-    return Transformer(
-        d_model=cfg.MODELS.TRANSFORMER.HIDDEN_DIM,
-        dropout=cfg.MODELS.TRANSFORMER.DROPOUT,
-        nhead=cfg.MODELS.TRANSFORMER.NHEADS,
-        dim_feedforward=cfg.MODELS.TRANSFORMER.DIM_FEEDFORWARD,
-        num_encoder_layers=cfg.MODELS.TRANSFORMER.ENC_LAYERS,
-        num_decoder_layers=cfg.MODELS.TRANSFORMER.DEC_LAYERS,
-        normalize_before=cfg.MODELS.TRANSFORMER.PRE_NORM,
-        return_intermediate_dec=True,
+    return TransformerEncoder(
+        encoder_layer = TransformerEncoderLayer(d_model=cfg.MODELS.TRANSFORMER.HIDDEN_DIM,
+                                                 nhead=cfg.MODELS.TRANSFORMER.NHEADS,
+                                                 dim_feedforward=cfg.MODELS.TRANSFORMER.DIM_FEEDFORWARD,
+                                                 dropout=cfg.MODELS.TRANSFORMER.DROPOUT,
+                                                 normalize_before=cfg.MODELS.TRANSFORMER.PRE_NORM),
+        num_layers=cfg.MODELS.TRANSFORMER.ENC_LAYERS,
+
     )
 
 

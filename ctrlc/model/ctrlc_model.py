@@ -1,26 +1,20 @@
+import numpy as np
 import torch
 import torch.nn.functional as F
 from torch import nn
+from einops import rearrange
 
-from ctrlc.util import (
-    NestedTensor,
-    nested_tensor_from_tensor_list,
-)
+from util.misc import (NestedTensor, nested_tensor_from_tensor_list,
+                       accuracy, get_world_size, interpolate,
+                       is_dist_avail_and_initialized)
 
 from .backbone import build_backbone
 from .transformer import build_transformer
 
-
 class GPTran(nn.Module):
-    def __init__(
-        self,
-        backbone,
-        transformer,
-        num_queries,
-        aux_loss=False,
-        use_structure_tensor=True,
-    ):
-        """Initializes the model.
+    def __init__(self, backbone, transformer, num_queries, 
+                 aux_loss=False, use_structure_tensor=True):
+        """ Initializes the model.
         Parameters:
             backbone: torch module of the backbone to be used. See backbone.py
             transformer: torch module of the transformer architecture. See transformer.py
@@ -31,66 +25,76 @@ class GPTran(nn.Module):
         super().__init__()
         self.num_queries = num_queries
         self.transformer = transformer
-
+        
         self.use_structure_tensor = use_structure_tensor
 
-        hidden_dim = transformer.d_model
-        
+        hidden_dim = 256
         self.vp1_embed = nn.Linear(hidden_dim, 3)
         self.vp2_embed = nn.Linear(hidden_dim, 3)
         self.vp3_embed = nn.Linear(hidden_dim, 3)
         self.vp1_class_embed = nn.Linear(hidden_dim, 1)
         self.vp2_class_embed = nn.Linear(hidden_dim, 1)
         self.vp3_class_embed = nn.Linear(hidden_dim, 1)
-
-        self.input_proj = nn.Conv2d(backbone.num_channels, hidden_dim, kernel_size=1)
-        # query embedding은 nn모듈에서 가져다가 쓴다...
         
+        self.input_proj = nn.Conv2d(backbone.num_channels, hidden_dim, kernel_size=1)        
         self.query_embed = nn.Embedding(num_queries, hidden_dim)
-        # self.line_embed = nn.Embedding(512, hidden_dim)
+        #self.line_embed = nn.Embedding(512, hidden_dim)
         line_dim = 3
         if self.use_structure_tensor:
-            line_dim = 6
-        self.input_line_proj = nn.Linear(line_dim, hidden_dim)
+            line_dim = 6        
+        self.input_line_proj = nn.Linear(line_dim, hidden_dim)        
         self.backbone = backbone
-        self.aux_loss = aux_loss
+        self.aux_loss = aux_loss   
 
-    def forward(self, samples, lines, line_mask):
-        #     def forward(self, samples: NestedTensor):
-        """The forward expects a NestedTensor, which consists of:
-        - samples.tensor: batched images, of shape [batch_size x 3 x H x W]
-        - samples.mask: a binary mask of shape [batch_size x H x W], containing 1 on padded pixels
+    def forward(self, lines, desc):
+#     def forward(self, samples: NestedTensor):
+        """ The forward expects a NestedTensor, which consists of:
+           - samples.tensor: batched images, of shape [batch_size x 3 x H x W]
+           - samples.mask: a binary mask of shape [batch_size x H x W], containing 1 on padded pixels            
         """
         extra_info = {}
-        #print("image_shaep:",samples.shape)
-        if isinstance(samples, (list, torch.Tensor)):
-            # samples는 배치 단위 이미지
-            samples = nested_tensor_from_tensor_list(samples)
-        # 이미지를 backbone을 통과시켜 feature 뽑고
+        # if isinstance(samples, (list, torch.Tensor)):
+        #     samples = nested_tensor_from_tensor_list(samples)
+        # features, pos = self.backbone(samples)
 
-        features, pos = self.backbone(samples)
+        # src, mask = features[-1].decompose()
+        # assert mask is not None
+        lmask = None #~extra_samples['line_mask'].squeeze(2).bool()
+        desc = desc
 
-        # feature 펴서 src 만들기
-        src, mask = features[-1].decompose()
-        assert mask is not None
-        
-        lmask = ~line_mask.squeeze(2).bool()
-        #print("lmask.shape",lmask.shape)
         # vlines [bs, n, 3]
         if self.use_structure_tensor:
             lines = self._to_structure_tensor(lines)
-        # src를 projection 시켜서 transformer에 넣어주기
-        # 여기서 query embedding에 들어가고, 이게 transformer decoder에 들어갈 때 tgt로 변수명이 표시됩니다.
-        hs, memory, _, _, _ = self.transformer(
-            src=self.input_proj(src),
-            mask=None,
-            query_embed=self.query_embed.weight,
-            tgt=self.input_line_proj(lines),
-            tgt_key_padding_mask=lmask,
-            pos_embed=pos[-1],
-            #line_embed = self.line_embed.weight
-        )
+        tgt = self.input_line_proj(lines)
+
+        bs = tgt.shape[0]
         
+        # desc = rearrange(desc,'b l p c -> (b l) c p').contiguous()
+        # desc = F.max_pool1d(desc, kernel_size=21, stride=1)
+        # desc = rearrange(desc, '(b l) c p -> b l p c',l=250,b=bs).contiguous().squeeze(2)
+        
+        tgt = tgt + desc
+        
+        query_embed=self.query_embed.weight
+        query_embed = query_embed.unsqueeze(1).repeat(1, bs, 1)
+        tgt = tgt.permute(1, 0, 2)
+        query_pos = torch.cat([query_embed, torch.zeros_like(tgt)], dim=0)
+        tgt = torch.cat([torch.zeros_like(query_embed), tgt], dim=0)
+        
+        hs, enc_attn = self.transformer(src=tgt, src_key_padding_mask=None, pos=query_pos)
+        # hs, memory, enc_attn, dec_self_attn, dec_cross_attn = (
+        #     self.transformer(src=self.input_proj(src), mask=None,
+        #                      query_embed=self.query_embed.weight,
+        #                      tgt=self.input_line_proj(lines), 
+        #                      tgt_key_padding_mask=None,
+        #                      pos_embed=pos[-1]))#,line_embed = self.line_embed.weight))
+        # ha [n_dec_layer, bs, num_query, ch]
+
+        hs = rearrange(hs,'l b h -> b l h').contiguous().unsqueeze(0)
+
+        extra_info['enc_attns'] = enc_attn
+        # extra_info['dec_self_attns'] = dec_self_attn
+        # extra_info['dec_cross_attns'] = dec_cross_attn
         outputs_vp1 = self.vp1_embed(hs[:,:,0,:]) # [n_dec_layer, bs, 3]
         outputs_vp1 = F.normalize(outputs_vp1, p=2, dim=-1)
 
@@ -103,28 +107,7 @@ class GPTran(nn.Module):
         outputs_vp1_class = self.vp1_class_embed(hs[:,:,3:,:])
         outputs_vp2_class = self.vp2_class_embed(hs[:,:,3:,:])
         outputs_vp3_class = self.vp3_class_embed(hs[:,:,3:,:])
-        # ha [n_dec_layer, bs, num_query, ch]
 
-        # extra_info["enc_attns"] = enc_attn
-        # extra_info["dec_self_attns"] = dec_self_attn
-        # extra_info["dec_cross_attns"] = dec_cross_attn
-        
-        # out = {
-        #     "pred_zvp": outputs_zvp[-1],
-        #     "pred_fovy": outputs_fovy[-1],
-        #     "pred_hl": outputs_hl[-1],
-        #     "pred_hvp1" : outputs_hvp1[-1],
-        #     "pred_hvp2" : outputs_hvp2[-1],
-        # }
-        # if self.aux_loss:
-        #     out["aux_outputs"] = self._set_aux_loss(
-        #         outputs_zvp,
-        #         outputs_fovy,
-        #         outputs_hl,
-        #         outputs_hvp1,
-        #         outputs_hvp2,
-        #     )
-        #hs[:, :, 3:, :]
         pred_view_vps = torch.cat([outputs_vp1[-1].unsqueeze(1),
                                     outputs_vp2[-1].unsqueeze(1),
                                     outputs_vp3[-1].unsqueeze(1)], dim=1)
@@ -136,7 +119,7 @@ class GPTran(nn.Module):
                         "pred_view_class2": outputs_vp2_class[-1],
                         "pred_view_class3": outputs_vp3_class[-1],
                         }
-        return hs,memory.permute(0,2,3,1),ctrlc_output
+        return hs.squeeze(0),ctrlc_output
 
 
     def _to_structure_tensor(self, params):

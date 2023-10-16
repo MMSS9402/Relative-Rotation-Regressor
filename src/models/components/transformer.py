@@ -2,7 +2,7 @@ from typing import List, Optional
 import torch
 import torch.nn as nn
 from .linear_attention import LinearAttention, FullAttention
-
+from einops import rearrange
 from torch import nn, Tensor
 import torch.nn.functional as F
 from . import multi_head_attention as mha
@@ -241,4 +241,4 @@ class TransformerEncoder(nn.Module):
         if self.norm is not None:
             output = self.norm(output)
 
-        return output, attn_weights
+        return rearrange(output,'l b c -> b l c').contiguous(), attn_weights
