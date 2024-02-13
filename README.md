@@ -1,5 +1,10 @@
 # CuTi
 
+## installation
+```shell
+pip install -r requirements.txt
+```
+
 ## train script
 ```shell
 python run.py 
@@ -9,3 +14,4 @@ python run.py
 ```shell
 python run.py experiment=cuti_run_test.yaml
 ```
+
