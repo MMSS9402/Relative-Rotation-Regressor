@@ -91,6 +91,7 @@ conf = {
 path = "/home/kmuvcl/source/oldCuTi/CuTi/matterport/mp3d_planercnn_json/cached_set_moon_test_vp.json"
 root = "/home/kmuvcl/source/oldCuTi/CuTi/matterport/"
 
+
 def read_data(path, device, resize):
     image = cv2.imread(str(path), cv2.IMREAD_COLOR)
     gray = cv2.cvtColor(image, cv2.COLOR_RGB2GRAY)

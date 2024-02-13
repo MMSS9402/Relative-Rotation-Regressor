@@ -24,6 +24,7 @@ class LinearAttention(Module):
         Returns:
             queried_values: (N, L, H, D)
         """
+
         Q = self.feature_map(queries)
         K = self.feature_map(keys)
 
@@ -68,7 +69,8 @@ class FullAttention(Module):
 
         # Compute the attention and the weighted average
         softmax_temp = 1. / queries.size(3)**.5  # sqrt(D)
-        A = torch.softmax(softmax_temp * QK, dim=2)
+        A = torch.softmax(softmax_temp * QK, dim=2) 
+
         if self.use_dropout:
             A = self.dropout(A)
 
@@ -135,7 +137,7 @@ class BilinearAttention(Module):
 
         # Compute the attention and the weighted average
         softmax_temp = 1. / queries.size(3)**.5  # sqrt(D)
-        A = torch.softmax(softmax_temp * QK, dim=2)
+        A = torch.softmax(softmax_temp * QK, dim=2) * torch.softmax(softmax_temp*QK,dim=1)
         if self.use_dropout:
             A = self.dropout(A)
 

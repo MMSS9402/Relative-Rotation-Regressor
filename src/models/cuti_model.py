@@ -43,6 +43,7 @@ class CuTiLitModule(LightningModule):
             ctrlc_checkpoint_path: str,
             # linetr: DictConfig,
             transformer: DictConfig,
+            vptransformer: DictConfig,
             pos_encoder: DictConfig,
             max_num_line: int,
             hidden_dim: int,
@@ -72,7 +73,9 @@ class CuTiLitModule(LightningModule):
         self.ctrlc: GPTran = build_ctrlc(ctrlc)
         # self.ctrlc1: GPTran = build_ctrlc(ctrlc)
         self.ctrlc.load_state_dict(ctrlc_checkpoint["model"], strict=False)
-
+        self.ctrlc.requires_grad_(False)
+        self.ctrlc.eval()
+        
         self.thresh_line_pos = np.cos(np.radians(88.0), dtype=np.float32) # near 0.0
         self.thresh_line_neg = np.cos(np.radians(85.0), dtype=np.float32)
 
@@ -90,17 +93,12 @@ class CuTiLitModule(LightningModule):
         self.line_idx_embedding = nn.Embedding(self.max_num_line, self.hidden_dim)
 
         self.transformer_block = hydra.utils.instantiate(transformer)
+        self.vptransformer_block = hydra.utils.instantiate(vptransformer)
 
-        translation_regressor_dim = 253
-        rotation_regressor_dim = 253
-        in_channels = 253
+        translation_regressor_dim = 9
+        rotation_regressor_dim = 9
+        in_channels = 6
         self.translation_regressor = nn.Sequential(
-            nn.Conv1d(in_channels, in_channels, kernel_size=1, stride=1, padding=0, bias=False),
-            nn.ReLU(),
-            nn.Conv1d(in_channels, in_channels, kernel_size=1, stride=1, padding=0, bias=False),
-            nn.ReLU(),
-            nn.Conv1d(in_channels, 1, kernel_size=1, stride=1, padding=0, bias=False),
-            nn.ReLU(),
             nn.Linear(translation_regressor_dim, translation_regressor_dim),
             nn.ReLU(),
             nn.Linear(translation_regressor_dim, translation_regressor_dim),
@@ -108,12 +106,6 @@ class CuTiLitModule(LightningModule):
             nn.Linear(translation_regressor_dim, 3),
         )
         self.rotation_regressor = nn.Sequential(
-            nn.Conv1d(in_channels, in_channels, kernel_size=1, stride=1, padding=0, bias=False),
-            nn.ReLU(),
-            nn.Conv1d(in_channels, in_channels, kernel_size=1, stride=1, padding=0, bias=False),
-            nn.ReLU(),
-            nn.Conv1d(in_channels, 1, kernel_size=1, stride=1, padding=0, bias=False),
-            nn.ReLU(),
             nn.Linear(rotation_regressor_dim, rotation_regressor_dim),
             nn.ReLU(),
             nn.Linear(rotation_regressor_dim, rotation_regressor_dim),
@@ -121,17 +113,31 @@ class CuTiLitModule(LightningModule):
             nn.Linear(rotation_regressor_dim, 4),
         )
 
-        self.line_conv = nn.Sequential(
+        self.conv = nn.Sequential(
             nn.Conv1d(in_channels, in_channels, kernel_size=1, stride=1, padding=0, bias=False),
             nn.ReLU(),
             nn.Conv1d(in_channels, in_channels, kernel_size=1, stride=1, padding=0, bias=False),
             nn.ReLU(),
             nn.Conv1d(in_channels, 3, kernel_size=1, stride=1, padding=0, bias=False),
+            nn.Linear(self.hidden_dim, self.hidden_dim),
+            nn.ReLU(),
+            nn.Linear(self.hidden_dim, self.hidden_dim),
+            nn.ReLU(),
+            nn.Linear(self.hidden_dim, 3)
         )
+
+        self.img0_vp0_embed = nn.Linear(hidden_dim, 3)
+        self.img0_vp1_embed = nn.Linear(hidden_dim, 3)
+        self.img0_vp2_embed = nn.Linear(hidden_dim, 3)
+
+        self.img1_vp0_embed = nn.Linear(hidden_dim, 3)
+        self.img1_vp1_embed = nn.Linear(hidden_dim, 3)
+        self.img1_vp2_embed = nn.Linear(hidden_dim, 3)
 
         self.maxpool = nn.MaxPool2d(2, 1)
 
-        self.query_embed = nn.Embedding(2, hidden_dim)
+        self.direction_embed0 = nn.Embedding(3, self.hidden_dim)
+        self.direction_embed1 = nn.Embedding(3, self.hidden_dim)
 
         self.criterion = hydra.utils.instantiate(criterion)
         self.test_camera = hydra.utils.instantiate(test_metric)
@@ -141,7 +147,7 @@ class CuTiLitModule(LightningModule):
 
         self.optimizer = optimizer
         self.scheduler = scheduler
-        self.automatic_optimization = False
+        # self.automatic_optimization = False
 
     def forward(self, images: torch.Tensor, target):
         endpoint = target['endpoint']
@@ -150,35 +156,85 @@ class CuTiLitModule(LightningModule):
 
         normal0 = target['normal0']
         normal1 = target['normal1']
+        lmask0 = target['lmask0']
+        lmask1 = target['lmask1']
 
-        desc0 = target['desc_sublines0'] # [10, 250, 21, 256] [b line pointm channel]
-        desc1 = target['desc_sublines1']
-
-
-        desc0 = rearrange(desc0,'b l p c -> (b l) c p').contiguous()
-        desc0 = F.max_pool1d(desc0, kernel_size=21, stride=1)
-        desc0 = rearrange(desc0, '(b l) c p -> b l p c',l=250,b=batch_size).contiguous().squeeze(2)
-
-        desc1 = rearrange(desc1,'b l p c -> (b l) c p').contiguous()
-        desc1 = F.max_pool1d(desc1, kernel_size=21, stride=1)
-        desc1 = rearrange(desc1, '(b l) c p -> b l p c',l=250,b=batch_size).contiguous().squeeze(2)
+        # desc0 = target['desc_sublines0'] # [10, 250, 21, 256] [b line pointm channel]
+        # desc1 = target['desc_sublines1']
 
 
-        hs0, ctrlc_output0 = self.ctrlc(normal0,desc0)
-        hs1, ctrlc_output1 = self.ctrlc(normal1,desc1)
+        # desc0 = rearrange(desc0,'b l p c -> (b l) c p').contiguous()
+        # desc0 = F.max_pool1d(desc0, kernel_size=21, stride=1)
+        # desc0 = rearrange(desc0, '(b l) c p -> b l p c',l=250,b=batch_size).contiguous().squeeze(2)
 
-        hs0[:,3:,:] = hs0[:,3:,:] + desc0
-        hs1[:,3:,:] = hs1[:,3:,:] + desc1 
+        # desc1 = rearrange(desc1,'b l p c -> (b l) c p').contiguous()
+        # desc1 = F.max_pool1d(desc1, kernel_size=21, stride=1)
+        # desc1 = rearrange(desc1, '(b l) c p -> b l p c',l=250,b=batch_size).contiguous().squeeze(2)
 
-        feat0,feat1 = self.transformer_block(hs0,hs1)
+
+        hs0, ctrlc_output0 = self.ctrlc(normal0,lmask0,None)
+        hs1, ctrlc_output1 = self.ctrlc(normal1,lmask1,None)
+
+        feat0 = hs0[:,:3]
+        feat1 = hs1[:,:3]
+
+        # vp_mask = torch.ones_like(hs0[:,:3,0]).unsqueeze(-1)
+
+        # line_mask0 = torch.cat([vp_mask,ctrlc_output0['line_mask']],dim=1).squeeze(-1)
+        # line_mask1 = torch.cat([vp_mask,ctrlc_output1['line_mask']],dim=1).squeeze(-1)
+
+        # hs0[:,3:,:] = hs0[:,3:,:] + desc0 #+ self.line_idx_embedding.weight
+        # hs1[:,3:,:] = hs1[:,3:,:] + desc1 #+ self.line_idx_embedding.weight
+ 
+        # hs0 = hs0 + self.image_idx_embedding.weight[0]
+        # hs1 = hs1 + self.image_idx_embedding.weight[1]
+
+        feat0,feat1 = self.transformer_block(feat0,feat1,mask0=None,mask1=None) #feat0,feat1 => [b line+vp hidden_dim]
+
+        # img0_vp0 = self.img0_vp0_embed(hs0[:,0,:])
+        # img0_vp1 = self.img0_vp1_embed(hs0[:,1,:])
+        # img0_vp2 = self.img0_vp2_embed(hs0[:,2,:])
+
+        # img1_vp0 = self.img1_vp0_embed(hs1[:,0,:])
+        # img1_vp1 = self.img1_vp1_embed(hs1[:,1,:])
+        # img1_vp2 = self.img1_vp2_embed(hs1[:,2,:])
+
+        # pred_view0_vps = torch.cat([img0_vp0.unsqueeze(1),
+        #                             img0_vp1.unsqueeze(1),
+        #                             img0_vp2.unsqueeze(1)], dim=1)
         
-        confidence_mat = feat0 @ feat1.transpose(-2,-1)
+        # pred_view1_vps = torch.cat([img1_vp0.unsqueeze(1),
+        #                             img1_vp1.unsqueeze(1),
+        #                             img1_vp2.unsqueeze(1)], dim=1)
 
+        # feat0 = hs0[:,:3,:]
+        # feat1 = hs1[:,:3,:]
+        
+        # feat0 = torch.cat([ctrlc_output0['pred_view_vps'],hs0[:,:3,:]],dim=2)
+        # feat1 = torch.cat([ctrlc_output1['pred_view_vps'],hs1[:,:3,:]],dim=2)
 
+        feat = torch.cat([feat0,feat1],dim=1)
+        # feat0,feat1 = self.vptransformer_block(hs0[:,:3,:],hs1[:,:3,:])
+        
+        # confidence_mat = feat0 @ feat1.transpose(-2,-1)
+
+        #vp_feat = torch.cat([feat0[:,:3,:],feat1[:,:3,:]],dim=1)
+        # feat = torch.cat([feat0,feat1],dim=1) #[b, 506 ,256]
+
+        feat = self.conv(feat) #[b, 3, 3]
+        
+        feat = rearrange(feat, 'b i h -> b (i h)').contiguous()
+        
+        R = self.rotation_regressor(feat)
+        T = self.translation_regressor(feat)
+        
+        pose_preds = torch.cat([T,R],dim=1)
 
         pred_view0_vps = ctrlc_output0['pred_view_vps']
         pred_view1_vps = ctrlc_output1['pred_view_vps']
-        return {#"pred_pose": self.normalize_preds(pose_preds),
+
+
+        return {"pred_pose": self.normalize_preds(pose_preds),
                 "pred_view0_vps": pred_view0_vps,
                 "pred_view1_vps": pred_view1_vps,
                 }
@@ -237,6 +293,7 @@ class CuTiLitModule(LightningModule):
             "tran": 1.0,
             "rot": 30,
         }
+
         pred_tran = np.vstack(predictions["camera"]["preds"]["tran"])
         pred_rot = np.vstack(predictions["camera"]["preds"]["rot"])
 
@@ -294,12 +351,12 @@ class CuTiLitModule(LightningModule):
         vp_loss0 = self.vp_criterion(pred_dict["pred_view0_vps"], vps[0], index0)
         vp_loss1 = self.vp_criterion(pred_dict["pred_view1_vps"], vps[1], index1)
 
-        # pred_poses = pred_dict["pred_pose"]
+        pred_poses = pred_dict["pred_pose"]
 
-        loss = (vp_loss0 + vp_loss1)
-        loss_dict = {'loss_vp0':vp_loss0, 'loss_vp1': vp_loss1}
+        # loss = (vp_loss0 + vp_loss1)
+        # loss_dict = {'loss_vp0':vp_loss0, 'loss_vp1': vp_loss1}
 
-        # loss, loss_dict = self.criterion(target_poses, pred_poses)
+        loss, loss_dict = self.criterion(target_poses, pred_poses)
 
         # return loss, loss_dict, pred_poses, target_poses
         return loss, loss_dict, pred_dict, target
@@ -311,10 +368,10 @@ class CuTiLitModule(LightningModule):
         # update and log metrics
         self.log('loss', loss, on_step=True, prog_bar=True)
         self.log("train/loss", loss, on_step=False, on_epoch=True, prog_bar=True)
-        # self.log("train/loss_tr", loss_dict["loss_tr"], on_step=False, on_epoch=True, prog_bar=True)
-        # self.log("train/loss_rot", loss_dict["loss_rot"], on_step=False, on_epoch=True, prog_bar=True)
-        self.log("train/loss_vp0", loss_dict["loss_vp0"], on_step=False, on_epoch=True, prog_bar=True)
-        self.log("train/loss_vp1", loss_dict["loss_vp1"], on_step=False, on_epoch=True, prog_bar=True)
+        self.log("train/loss_tr", loss_dict["loss_tr"], on_step=False, on_epoch=True, prog_bar=True)
+        self.log("train/loss_rot", loss_dict["loss_rot"], on_step=False, on_epoch=True, prog_bar=True)
+        # self.log("train/loss_vp0", loss_dict["loss_vp0"], on_step=False, on_epoch=True, prog_bar=True)
+        # self.log("train/loss_vp1", loss_dict["loss_vp1"], on_step=False, on_epoch=True, prog_bar=True)
         # self.log("train/acc", acc, on_step=False, on_epoch=True, prog_bar=True)
         # print("self.global_step",self.global_step)
 
@@ -356,10 +413,10 @@ class CuTiLitModule(LightningModule):
 
         # update and log metrics
         self.log("val/loss", loss, on_step=False, on_epoch=True, prog_bar=True)
-        self.log("val/loss_vp0", loss_dict["loss_vp0"], on_step=False, on_epoch=True, prog_bar=True)
-        self.log("val/loss_vp1", loss_dict["loss_vp1"], on_step=False, on_epoch=True, prog_bar=True)
-        # self.log("val/loss_tr", loss_dict["loss_tr"], on_step=False, on_epoch=True, prog_bar=True)
-        # self.log("val/loss_rot", loss_dict["loss_rot"], on_step=False, on_epoch=True, prog_bar=True)
+        # self.log("val/loss_vp0", loss_dict["loss_vp0"], on_step=False, on_epoch=True, prog_bar=True)
+        # self.log("val/loss_vp1", loss_dict["loss_vp1"], on_step=False, on_epoch=True, prog_bar=True)
+        self.log("val/loss_tr", loss_dict["loss_tr"], on_step=False, on_epoch=True, prog_bar=True)
+        self.log("val/loss_rot", loss_dict["loss_rot"], on_step=False, on_epoch=True, prog_bar=True)
         # self.log("val/acc", acc, on_step=False, on_epoch=True, prog_bar=True)
 
         # visualization
@@ -406,7 +463,7 @@ class CuTiLitModule(LightningModule):
         return predictions, self.vp_loss0, self.vp_loss1
 
     def test_epoch_end(self, outputs: List[Any]):
-        predictions = outputs[0]
+        predictions = outputs[0][0]
         vp_loss0 = outputs[0][1]
         vp_loss1 = outputs[0][2]
         print("vp0 average loss : ", sum(vp_loss0) / len(vp_loss0))

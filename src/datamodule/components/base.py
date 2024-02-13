@@ -220,17 +220,18 @@ class RGBDDataset(Dataset):
         pp = (width / 2, height / 2)
         rho = 517.97
 
-        lines0 = np.copy(sublines0.reshape(num_segs,-1).numpy())
+        lines0 = np.copy(klines0.reshape(num_segs,-1).numpy())
+
         lines0 = self.coordinate_yup(lines0,height)
         lines0 = self.normalize_segs(lines0, pp=pp, rho=rho)
-        normal0 = np.copy(lines0)
-        normal0 = self.segs2lines_np(normal0)
+        lines0,line_mask0 = self.sample_segs_np(lines0, num_sample=512)
+        normal0 = self.segs2lines_np(lines0)
 
-        lines1 = np.copy(sublines1.reshape(num_segs,-1).numpy())
+        lines1 = np.copy(klines1.reshape(num_segs,-1).numpy())
         lines1 = self.coordinate_yup(lines1,height)
         lines1 = self.normalize_segs(lines1, pp=pp, rho=rho)
-        normal1 = np.copy(lines1)
-        normal1 = self.segs2lines_np(normal1)
+        lines1,line_mask1 = self.sample_segs_np(lines1, num_sample=512)
+        normal1 = self.segs2lines_np(lines1)
         
         target['vps'] = (
             torch.from_numpy(np.ascontiguousarray(vps)).contiguous().float()
@@ -291,6 +292,9 @@ class RGBDDataset(Dataset):
         target['img_path1'] = images_list[1]
         target['h5py_path0'] = h5py_path[0]
         target['h5py_path1'] = h5py_path[1]
+
+        target['lmask0'] = line_mask0
+        target['lmask1'] = line_mask1
         
         return images , target
         

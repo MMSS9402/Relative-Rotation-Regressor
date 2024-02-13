@@ -8,11 +8,11 @@ from util.misc import (NestedTensor, nested_tensor_from_tensor_list,
                        accuracy, get_world_size, interpolate,
                        is_dist_avail_and_initialized)
 
-from .backbone import build_backbone
+# from .backbone import build_backbone
 from .transformer import build_transformer
 
 class GPTran(nn.Module):
-    def __init__(self, backbone, transformer, num_queries, 
+    def __init__(self,transformer, num_queries, 
                  aux_loss=False, use_structure_tensor=True):
         """ Initializes the model.
         Parameters:
@@ -36,17 +36,17 @@ class GPTran(nn.Module):
         self.vp2_class_embed = nn.Linear(hidden_dim, 1)
         self.vp3_class_embed = nn.Linear(hidden_dim, 1)
         
-        self.input_proj = nn.Conv2d(backbone.num_channels, hidden_dim, kernel_size=1)        
+        # self.input_proj = nn.Conv2d(backbone.num_channels, hidden_dim, kernel_size=1)        
         self.query_embed = nn.Embedding(num_queries, hidden_dim)
         #self.line_embed = nn.Embedding(512, hidden_dim)
         line_dim = 3
         if self.use_structure_tensor:
             line_dim = 6        
         self.input_line_proj = nn.Linear(line_dim, hidden_dim)        
-        self.backbone = backbone
+        # self.backbone = backbone
         self.aux_loss = aux_loss   
 
-    def forward(self, lines, desc):
+    def forward(self, lines, lmask, desc=None):
 #     def forward(self, samples: NestedTensor):
         """ The forward expects a NestedTensor, which consists of:
            - samples.tensor: batched images, of shape [batch_size x 3 x H x W]
@@ -59,8 +59,9 @@ class GPTran(nn.Module):
 
         # src, mask = features[-1].decompose()
         # assert mask is not None
-        lmask = None #~extra_samples['line_mask'].squeeze(2).bool()
-        desc = desc
+
+     
+        # desc = desc
 
         # vlines [bs, n, 3]
         if self.use_structure_tensor:
@@ -73,7 +74,8 @@ class GPTran(nn.Module):
         # desc = F.max_pool1d(desc, kernel_size=21, stride=1)
         # desc = rearrange(desc, '(b l) c p -> b l p c',l=250,b=bs).contiguous().squeeze(2)
         
-        tgt = tgt + desc
+        # 이거 descriptor 넣어줄 때 주석 해제해야 함!!!!!
+        # tgt = tgt + desc
         
         query_embed=self.query_embed.weight
         query_embed = query_embed.unsqueeze(1).repeat(1, bs, 1)
@@ -81,7 +83,7 @@ class GPTran(nn.Module):
         query_pos = torch.cat([query_embed, torch.zeros_like(tgt)], dim=0)
         tgt = torch.cat([torch.zeros_like(query_embed), tgt], dim=0)
         
-        hs, enc_attn = self.transformer(src=tgt, src_key_padding_mask=None, pos=query_pos)
+        hs, enc_attn = self.transformer(src=tgt, src_key_padding_mask=lmask, pos=query_pos)
         # hs, memory, enc_attn, dec_self_attn, dec_cross_attn = (
         #     self.transformer(src=self.input_proj(src), mask=None,
         #                      query_embed=self.query_embed.weight,
@@ -112,12 +114,28 @@ class GPTran(nn.Module):
                                     outputs_vp2[-1].unsqueeze(1),
                                     outputs_vp3[-1].unsqueeze(1)], dim=1)
 
-        
+        outputs_vp1_prob = torch.sigmoid(outputs_vp1_class)
+        outputs_vp2_prob = torch.sigmoid(outputs_vp2_class)
+        outputs_vp3_prob = torch.sigmoid(outputs_vp3_class)
+
+        outputs_vp1_class = torch.where(outputs_vp1_prob>0.8,1,0)
+        outputs_vp2_class = torch.where(outputs_vp2_prob>0.8,2,0)
+        outputs_vp3_class = torch.where(outputs_vp3_prob>0.8,3,0)
+
+        line_mask = torch.zeros_like(outputs_vp1_prob)
+        line_mask[outputs_vp1_prob>0.8] = 1
+        line_mask[(outputs_vp2_prob>outputs_vp1_prob) & (outputs_vp2_prob>0.8)] = 2
+        line_mask[(outputs_vp3_prob>outputs_vp1_prob) & (outputs_vp3_prob>outputs_vp2_prob) & (outputs_vp3_prob> 0.8)]
+        class_line_mask = line_mask
+        line_mask = torch.where(line_mask>0,1,0)
+
         ctrlc_output = {
                         "pred_view_vps": pred_view_vps,
-                        "pred_view_class1": outputs_vp1_class[-1],
-                        "pred_view_class2": outputs_vp2_class[-1],
-                        "pred_view_class3": outputs_vp3_class[-1],
+                        "class_labeling": class_line_mask[-1],
+                        "line_mask":line_mask[-1],
+                        # "pred_view_class1": outputs_vp1_class[-1],
+                        # "pred_view_class2": outputs_vp2_class[-1],
+                        # "pred_view_class3": outputs_vp3_class[-1],
                         }
         return hs.squeeze(0),ctrlc_output
 
@@ -152,11 +170,11 @@ class MLP(nn.Module):
 
 
 def build_ctrlc(cfg):
-    backbone = build_backbone(cfg)
+    # backbone = build_backbone(cfg)
     transformer = build_transformer(cfg)
 
     ctrlc = GPTran(
-        backbone,
+        # backbone,
         transformer,
         num_queries=cfg.MODELS.TRANSFORMER.NUM_QUERIES,
         use_structure_tensor=cfg.MODELS.USE_STRUCTURE_TENSOR,

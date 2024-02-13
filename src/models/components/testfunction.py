@@ -39,6 +39,8 @@ class Testcamera(Callable):
         preds[:,3] = pr_copy[:,6] # swap 3 & 6, we used W last; want W first in quat
         preds[:,6] = pr_copy[:,3]
         preds[:,:3] = preds[:,:3] * 5
+
+        
         
         predictions['camera']['preds']['tran'].append(preds[:,:3])
         predictions['camera']['preds']['rot'].append(preds[:,3:])
@@ -53,6 +55,13 @@ class Testcamera(Callable):
         gt_tran = gt[:,:3]
         gt_rotation = gt[:,3:]
         batch_size = gt_rotation.shape[0]
+
+        # for i in range(batch_size):
+        #     if preds[i,3] < 0: # normalize quaternions to have positive "W" (equivalent)
+        #         preds[i,3] *= -1
+        #         preds[i,4] *= -1
+        #         preds[i,5] *= -1
+        #         preds[i,6] *= -1
         
         for i in range(batch_size):
             if gt_rotation[i,0] < 0: # normalize quaternions to have positive "W" (equivalent)

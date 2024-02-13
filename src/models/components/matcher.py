@@ -18,7 +18,7 @@ class HungarianMatcher(nn.Module):
         src_zvp = outputs                                   
         target_zvp = targets
         #print(src_zvp.shape,target_zvp.shape)
-        cos_sim = F.cosine_similarity(src_zvp, target_zvp, dim=-1).abs()   
+        cos_sim = F.cosine_similarity(src_zvp, target_zvp, dim=-1)#.abs()
         #print("cos_sim.shape",cos_sim.shape) 
         loss_vp_cos = (1.0 - cos_sim)
             

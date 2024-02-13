@@ -321,9 +321,7 @@ def build_transformer(cfg):
                                                  dim_feedforward=cfg.MODELS.TRANSFORMER.DIM_FEEDFORWARD,
                                                  dropout=cfg.MODELS.TRANSFORMER.DROPOUT,
                                                  normalize_before=cfg.MODELS.TRANSFORMER.PRE_NORM),
-        num_layers=cfg.MODELS.TRANSFORMER.ENC_LAYERS,
-
-    )
+                                                num_layers=cfg.MODELS.TRANSFORMER.ENC_LAYERS,)
 
 
 def _get_activation_fn(activation):
