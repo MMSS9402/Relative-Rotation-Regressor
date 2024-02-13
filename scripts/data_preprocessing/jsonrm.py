@@ -41,8 +41,8 @@ if __name__ == '__main__':
     else:
         path = ''
 
-    json_files = glob(os.path.join(path, '**/*.jpg'), recursive=True)
-    mp4_files = glob(os.path.join(path, '**/*.csv'), recursive=True)
+    json_files = glob(os.path.join(path, '**/*.h5py'), recursive=True)
+    # mp4_files = glob(os.path.join(path, '**/*.csv'), recursive=True)
     #gar_files = glob(os.path.join(path, '**/._*'), recursive=True)
 
     json_files_per_sequences = {}
@@ -70,29 +70,29 @@ if __name__ == '__main__':
             continue
 
 
-    mp4_files_per_sequences = {}
-    for mp4_file in mp4_files:
-        mp4_file_path = Path(mp4_file)
-        if mp4_file_path.stem == 'start.json' or mp4_file_path.stem == 'end.json' or '__processed__' in mp4_file:
-            continue
-        dirname = mp4_file_path.parent
-        if dirname not in mp4_files_per_sequences:
-            mp4_files_per_sequences[dirname] = []
-        mp4_files_per_sequences[dirname].append(mp4_file)
+    # mp4_files_per_sequences = {}
+    # for mp4_file in mp4_files:
+    #     mp4_file_path = Path(mp4_file)
+    #     if mp4_file_path.stem == 'start.json' or mp4_file_path.stem == 'end.json' or '__processed__' in mp4_file:
+    #         continue
+    #     dirname = mp4_file_path.parent
+    #     if dirname not in mp4_files_per_sequences:
+    #         mp4_files_per_sequences[dirname] = []
+    #     mp4_files_per_sequences[dirname].append(mp4_file)
         
-    total_frames = 0
-    total_sequences = 0
+    # total_frames = 0
+    # total_sequences = 0
 
-    for dirname, mp4_files_per_sequence in tqdm(mp4_files_per_sequences.items()):
-        defaults_path = None
-        frame_paths = []
+    # for dirname, mp4_files_per_sequence in tqdm(mp4_files_per_sequences.items()):
+    #     defaults_path = None
+    #     frame_paths = []
 
-        for mp4_file in mp4_files_per_sequence:
-            os.remove(mp4_file)
+    #     for mp4_file in mp4_files_per_sequence:
+    #         os.remove(mp4_file)
 
-        if defaults_path is None and len(frame_paths) == 0:
-            print('mp4 files not found for: {}'.format(dirname))
-            continue
+    #     if defaults_path is None and len(frame_paths) == 0:
+    #         print('mp4 files not found for: {}'.format(dirname))
+    #         continue
 
 
 

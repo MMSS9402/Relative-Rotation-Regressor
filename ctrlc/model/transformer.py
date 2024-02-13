@@ -16,40 +16,24 @@ from torch import nn, Tensor
 
 from . import multi_head_attention as mha
 
-
 class Transformer(nn.Module):
-    def __init__(
-        self,
-        d_model=512,
-        nhead=8,
-        num_encoder_layers=6,
-        num_decoder_layers=6,
-        dim_feedforward=2048,
-        dropout=0.1,
-        activation="relu",
-        normalize_before=False,
-        return_intermediate_dec=False,
-    ):
+
+    def __init__(self, d_model=512, nhead=8, num_encoder_layers=6,
+                 num_decoder_layers=6, dim_feedforward=2048, dropout=0.1,
+                 activation="relu", normalize_before=False,
+                 return_intermediate_dec=False):
         super().__init__()
 
-        encoder_layer = TransformerEncoderLayer(
-            d_model, nhead, dim_feedforward, dropout, activation, normalize_before
-        )
+        encoder_layer = TransformerEncoderLayer(d_model, nhead, dim_feedforward,
+                                                dropout, activation, normalize_before)
         encoder_norm = nn.LayerNorm(d_model) if normalize_before else None
-        self.encoder = TransformerEncoder(
-            encoder_layer, num_encoder_layers, encoder_norm
-        )
+        self.encoder = TransformerEncoder(encoder_layer, num_encoder_layers, encoder_norm)
 
-        decoder_layer = TransformerDecoderLayer(
-            d_model, nhead, dim_feedforward, dropout, activation, normalize_before
-        )
+        decoder_layer = TransformerDecoderLayer(d_model, nhead, dim_feedforward,
+                                                dropout, activation, normalize_before)
         decoder_norm = nn.LayerNorm(d_model)
-        self.decoder = TransformerDecoder(
-            decoder_layer,
-            num_decoder_layers,
-            decoder_norm,
-            return_intermediate=return_intermediate_dec,
-        )
+        self.decoder = TransformerDecoder(decoder_layer, num_decoder_layers, decoder_norm,
+                                          return_intermediate=return_intermediate_dec)
 
         self._reset_parameters()
 
@@ -61,145 +45,110 @@ class Transformer(nn.Module):
             if p.dim() > 1:
                 nn.init.xavier_uniform_(p)
 
-    def forward(self, src, mask, query_embed, tgt, tgt_key_padding_mask, pos_embed):#,line_embed):
+    def forward(self, src, mask, query_embed, tgt, tgt_key_padding_mask, pos_embed):#, line_embed):
         # flatten NxCxHxW to HWxNxC
-        num_queries = tgt.size(1)
+        num_queries = query_embed.size(0) + tgt.size(1)
 
         bs, c, h, w = src.shape
-        src = src.flatten(2).permute(
-            2, 0, 1
-        )  # flattem(2) -> [bs, c , h*w] -> permute(2,0,1) -> [h*w,bs,c]
-        pos_embed = pos_embed.flatten(2).permute(2, 0, 1)  # [h*w,bs,c]
-        query_embed = query_embed.unsqueeze(1).repeat(
-            1, bs, 1
-        )
+        src = src.flatten(2).permute(2, 0, 1)
+        pos_embed = pos_embed.flatten(2).permute(2, 0, 1)
+        query_embed = query_embed.unsqueeze(1).repeat(1, bs, 1)
         tgt = tgt.permute(1, 0, 2)
-        # print("tgt",tgt.shape)
-        # print("query_pose",query_embed.shape)
-        # print("tgt_key",tgt_key_padding_mask.shape)
-        # print(c)
+        #line_embed = line_embed.unsqueeze(1).repeat(1,bs,1)
+        #print('line_embed.shape',line_embed.shape)
         query_pos = torch.cat([query_embed, torch.zeros_like(tgt)], dim=0)
         #query_pos = torch.cat([query_embed, line_embed], dim=0)
+        tgt = torch.cat([torch.zeros_like(query_embed), tgt], dim=0) # [n, bs, ch]
+        # tgt_key_padding_mask = torch.cat([torch.zeros(bs, query_embed.size(0), dtype=torch.bool, device=query_embed.device), tgt_key_padding_mask], dim=1)
+        # mask = mask.flatten(1)
         
-        tgt = torch.cat([torch.zeros_like(query_embed), tgt], dim=0)  # [n, bs, ch]
-        # print(tgt.shape)
-        # tgt_key_padding_mask = tgt_key_padding_mask.permute(1,0,2)
-        # tgt_key_padding_mask = torch.cat(
-        #     [
-        #         torch.zeros(
-        #             bs, query_embed.size(0),c, dtype=torch.bool, device=query_embed.device
-        #         ),
-        #         tgt_key_padding_mask,
-        #     ],
-        #     dim=0,
-        # )
-        # print("tgt_key",tgt_key_padding_mask.shape)
-        mask = mask.flatten(1)  # [h*w]
+        memory, enc_attns = self.encoder(src, src_key_padding_mask=None, pos=pos_embed)
 
-        memory = self.encoder(src, src_key_padding_mask=mask, pos=pos_embed)
-        hs = self.decoder(
-            tgt,
-            memory,
-            tgt_key_padding_mask=None,
-            memory_key_padding_mask=mask,
-            pos=pos_embed,   
-            query_pos=query_pos
-        )
-        #print("memory_shape",memory.shape)
-        #print("decoder shape",hs.shape)
-        #import pdb; pdb.set_trace()
+        
+        hs, dec_self_attns, dec_cross_attns = self.decoder(tgt, memory,
+                                            tgt_key_padding_mask=None,
+                                            memory_key_padding_mask=None,
+                                            pos=pos_embed, 
+                                            query_pos=query_pos)
 
-        return (
-            hs.transpose(1, 2),  # hs [dec_ayer, bs, n, ch]
-            memory.permute(1, 2, 0).view(bs, c, h, w)
-        )  # dim of source
+        # enc_attn_weights [enc_ayer, bs, nhead, h*w, h*w]
+        # dec_attn_weights [dec_ayer, bs, nhead, n_qeury, h*w]
 
+        return (hs.transpose(1, 2), # hs [dec_ayer, bs, n, ch]
+                memory.permute(1, 2, 0).view(bs, c, h, w), 
+                enc_attns.permute(1, 0, 2, 3).view(bs, self.encoder.num_layers,
+                                                          h, w,  # dim of target
+                                                          h, w), # dim of source
+                dec_self_attns.permute(1, 0, 2, 3).view(bs, self.decoder.num_layers,
+                                                        num_queries,  # dim of target
+                                                        num_queries), # dim of source
+                dec_cross_attns.permute(1, 0, 2, 3).view(bs, self.decoder.num_layers,
+                                                        num_queries,  # dim of target
+                                                        h, w))        # dim of source
 
 class TransformerEncoder(nn.Module):
+
     def __init__(self, encoder_layer, num_layers, norm=None):
         super().__init__()
-        # get_clone 할 때 Deepcopy로 moduleList를 만들어주어서, self.layer에
-        # Deepcopy로 이루어진 각기 다른 인코더 갯수만큼 들어가게 됨
         self.layers = _get_clones(encoder_layer, num_layers)
         self.num_layers = num_layers
         self.norm = norm
 
-    def forward(
-        self,
-        src,
-        mask: Optional[Tensor] = None,
-        src_key_padding_mask: Optional[Tensor] = None,
-        pos: Optional[Tensor] = None,
-    ):
-        # backbone에서 처리된 feature가 src로 들어오게 됨
+    def forward(self, src,
+                mask: Optional[Tensor] = None,
+                src_key_padding_mask: Optional[Tensor] = None,
+                pos: Optional[Tensor] = None):
         output = src
 
-        
-        #print("encoder",src.shape)
+        attn_weights = []
 
         for layer in self.layers:
-            # layer에서 나온 output들을 계속 다음 layer에 넣어줌
-            output = layer(
-                output,
-                src_mask=mask,
-                src_key_padding_mask=src_key_padding_mask,
-                pos=pos,
-            )
-        #print("encoder",output.shape)
-
+            output, attn_weight = layer(output, src_mask=mask,
+                           src_key_padding_mask=src_key_padding_mask, pos=pos)
+            attn_weights.append(attn_weight)
+        attn_weights = torch.stack(attn_weights)
         if self.norm is not None:
             output = self.norm(output)
 
-        return output
+        return output, attn_weights
 
 
 class TransformerDecoder(nn.Module):
+
     def __init__(self, decoder_layer, num_layers, norm=None, return_intermediate=False):
         super().__init__()
-        # Decoder layer를 갯수만큼 Deepcopy로 복제해서 modulelist로 받아옵니다.
         self.layers = _get_clones(decoder_layer, num_layers)
         self.num_layers = num_layers
         self.norm = norm
         self.return_intermediate = return_intermediate
 
-    def forward(
-        self,
-        tgt,
-        memory,
-        tgt_mask: Optional[Tensor] = None,
-        memory_mask: Optional[Tensor] = None,
-        tgt_key_padding_mask: Optional[Tensor] = None,
-        memory_key_padding_mask: Optional[Tensor] = None,
-        pos: Optional[Tensor] = None,
-        query_pos: Optional[Tensor] = None,
-    ):
-        # target에 object query와 Line segment 정보를 받고, memory 에는 encoder의 결과물을 받음
-        #print("decoder_layer_tgt" , tgt.shape)
+    def forward(self, tgt, memory,
+                tgt_mask: Optional[Tensor] = None,
+                memory_mask: Optional[Tensor] = None,
+                tgt_key_padding_mask: Optional[Tensor] = None,
+                memory_key_padding_mask: Optional[Tensor] = None,
+                pos: Optional[Tensor] = None,
+                query_pos: Optional[Tensor] = None):
         output = tgt
 
         intermediate = []
+        self_attn_weights = []
+        cross_attn_weights = []
 
-        #print("decoder_layer_tgt",output.shape  )
-        # decoder layer를 반복하면서 이전 layer의 output 출력을 이후 layer에 넣어줌
         for layer in self.layers:
-            output = layer(
-                output,
-                memory,
-                tgt_mask=tgt_mask,
-                memory_mask=memory_mask,
-                tgt_key_padding_mask=tgt_key_padding_mask,
-                memory_key_padding_mask=memory_key_padding_mask,
-                pos=pos,
-                query_pos=query_pos,
+            output, self_attn_weight, cross_attn_weight = (
+                layer(output, memory, tgt_mask=tgt_mask,
+                      memory_mask=memory_mask,
+                      tgt_key_padding_mask=tgt_key_padding_mask,
+                      memory_key_padding_mask=memory_key_padding_mask,
+                      pos=pos, query_pos=query_pos)
             )
-            
-            # intermediate는 layer 중간중간 output들을 다 쌓아서 저장한 list
-            # 마지막 output을 출력할 때 FFN를 5개를 써서 출력하기 때문에
-            # 이걸 각각 loss를 나눠서 주려면 intermediate가 필요한 것이 아닐까..?
-            #print("중간 for문",output.shape)
             if self.return_intermediate:
                 intermediate.append(self.norm(output))
-        #print("decortr_layer_output",output.shape)
+            self_attn_weights.append(self_attn_weight)
+            cross_attn_weights.append(cross_attn_weight)
+        self_attn_weights = torch.stack(self_attn_weights)
+        cross_attn_weights = torch.stack(cross_attn_weights)
 
         if self.norm is not None:
             output = self.norm(output)
@@ -208,26 +157,19 @@ class TransformerDecoder(nn.Module):
                 intermediate.append(output)
 
         if self.return_intermediate:
-            return torch.stack(intermediate)
-        return output.unsqueeze(0)
+            return torch.stack(intermediate), self_attn_weights, cross_attn_weights
+
+        return output.unsqueeze(0), self_attn_weights, cross_attn_weights
 
 
 class TransformerEncoderLayer(nn.Module):
-    def __init__(
-        self,
-        d_model,
-        nhead,
-        dim_feedforward=2048,
-        dropout=0.1,
-        activation="relu",
-        normalize_before=False,
-    ):
+
+    def __init__(self, d_model, nhead, dim_feedforward=2048, dropout=0.1,
+                 activation="relu", normalize_before=False):
         super().__init__()
         # self.self_attn = nn.MultiheadAttention(d_model, nhead, dropout=dropout)
         self.self_attn = mha.MultiheadAttention(d_model, nhead, dropout=dropout)
         # Implementation of Feedforward model
-
-        # Feedforward Network
         self.linear1 = nn.Linear(d_model, dim_feedforward)
         self.dropout = nn.Dropout(dropout)
         self.linear2 = nn.Linear(dim_feedforward, d_model)
@@ -243,77 +185,52 @@ class TransformerEncoderLayer(nn.Module):
     def with_pos_embed(self, tensor, pos: Optional[Tensor]):
         return tensor if pos is None else tensor + pos
 
-    # Normalization을 dropout보다 앞에 할 거냐 뒤에 할 거냐로 forward pre,post가 나뉘는 듯함.
-    # 왜 이렇게 하는거지?
-    def forward_post(
-        self,
-        src,
-        src_mask: Optional[Tensor] = None,
-        src_key_padding_mask: Optional[Tensor] = None,
-        pos: Optional[Tensor] = None,
-    ):
-        # 쿼리,키,밸류를 따로따로 받아주는게 아니라 src로 한 번에 받아줌.
+    def forward_post(self,
+                     src,
+                     src_mask: Optional[Tensor] = None,
+                     src_key_padding_mask: Optional[Tensor] = None,
+                     pos: Optional[Tensor] = None):
         q = k = self.with_pos_embed(src, pos)
-        # q,k,v가 준비된 다음, multi-haed attention 진행
-        src2, _ = self.self_attn(
-            q, k, value=src, attn_mask=src_mask, key_padding_mask=src_key_padding_mask
-        )
-        # 임배딩 된 값을 dropout, normalization
-        #print(src2.type())
+        src2, attn_weight = self.self_attn(q, k, value=src, attn_mask=None,
+                              key_padding_mask=None)
+        
         src = src + self.dropout1(src2)
         src = self.norm1(src)
-        # Feedforward Network에 넣어줌.
         src2 = self.linear2(self.dropout(self.activation(self.linear1(src))))
-        # Residual connection
         src = src + self.dropout2(src2)
-        # Normalization
         src = self.norm2(src)
-        return src
+        return src, attn_weight # post
 
-    def forward_pre(
-        self,
-        src,
-        src_mask: Optional[Tensor] = None,
-        src_key_padding_mask: Optional[Tensor] = None,
-        pos: Optional[Tensor] = None,
-    ):
+    def forward_pre(self, src,
+                    src_mask: Optional[Tensor] = None,
+                    src_key_padding_mask: Optional[Tensor] = None,
+                    pos: Optional[Tensor] = None):
         src2 = self.norm1(src)
         q = k = self.with_pos_embed(src2, pos)
-        src2, _= self.self_attn(
-            q, k, value=src2, attn_mask=src_mask, key_padding_mask=src_key_padding_mask
-        )
+        src2, attn_weight = self.self_attn(q, k, value=src2, attn_mask=None,
+                              key_padding_mask=None)
         src = src + self.dropout1(src2)
         src2 = self.norm2(src)
         src2 = self.linear2(self.dropout(self.activation(self.linear1(src2))))
         src = src + self.dropout2(src2)
-        return src
+        return src, attn_weight # pre
 
-    def forward(
-        self,
-        src,
-        src_mask: Optional[Tensor] = None,
-        src_key_padding_mask: Optional[Tensor] = None,
-        pos: Optional[Tensor] = None,
-    ):
+    def forward(self, src,
+                src_mask: Optional[Tensor] = None,
+                src_key_padding_mask: Optional[Tensor] = None,
+                pos: Optional[Tensor] = None):
         if self.normalize_before:
             return self.forward_pre(src, src_mask, src_key_padding_mask, pos)
         return self.forward_post(src, src_mask, src_key_padding_mask, pos)
 
 
 class TransformerDecoderLayer(nn.Module):
-    def __init__(
-        self,
-        d_model,
-        nhead,
-        dim_feedforward=2048,
-        dropout=0.1,
-        activation="relu",
-        normalize_before=False,
-    ):
+
+    def __init__(self, d_model, nhead, dim_feedforward=2048, dropout=0.1,
+                 activation="relu", normalize_before=False):
         super().__init__()
         # self.self_attn = nn.MultiheadAttention(d_model, nhead, dropout=dropout)
         # self.multihead_attn = nn.MultiheadAttention(d_model, nhead, dropout=dropout)
-        # multi-haed attention이 2개 필요 (self & Cross attention)
         self.self_attn = mha.MultiheadAttention(d_model, nhead, dropout=dropout)
         self.multihead_attn = mha.MultiheadAttention(d_model, nhead, dropout=dropout)
         # Implementation of Feedforward model
@@ -334,131 +251,77 @@ class TransformerDecoderLayer(nn.Module):
     def with_pos_embed(self, tensor, pos: Optional[Tensor]):
         return tensor if pos is None else tensor + pos
 
-    # tgt(target)은 object query 3개를 포함한 Line 정보들
-    def forward_post(
-        self,
-        tgt,
-        memory,
-        tgt_mask: Optional[Tensor] = None,
-        memory_mask: Optional[Tensor] = None,
-        tgt_key_padding_mask: Optional[Tensor] = None,
-        memory_key_padding_mask: Optional[Tensor] = None,
-        pos: Optional[Tensor] = None,
-        query_pos: Optional[Tensor] = None,
-    ):
+    def forward_post(self, tgt, memory,
+                     tgt_mask: Optional[Tensor] = None,
+                     memory_mask: Optional[Tensor] = None,
+                     tgt_key_padding_mask: Optional[Tensor] = None,
+                     memory_key_padding_mask: Optional[Tensor] = None,
+                     pos: Optional[Tensor] = None,
+                     query_pos: Optional[Tensor] = None):
         q = k = self.with_pos_embed(tgt, query_pos)
-        # self-attention
-        tgt2, _= self.self_attn(
-            q, k, value=tgt, attn_mask=tgt_mask, key_padding_mask=tgt_key_padding_mask
-        )
-        # skip-connection
+        tgt2, self_attn_weight = self.self_attn(q, k, value=tgt, attn_mask=tgt_mask,
+                              key_padding_mask=tgt_key_padding_mask)
         tgt = tgt + self.dropout1(tgt2)
-        # normalization
         tgt = self.norm1(tgt)
-        # cross-attention(key,value가 memory로부터 옴 => encoder layer에서 src가 들어옴)
-        #print("차원계산(tgt)", tgt.shape)
-        #print("차원계산(memory)",memory.shape)
-        tgt2, _ = self.multihead_attn(
-            query=self.with_pos_embed(tgt, query_pos),
-            key=self.with_pos_embed(memory, pos),
-            value=memory,
-            attn_mask=memory_mask,
-            key_padding_mask=memory_key_padding_mask,
-        )
-        # skip-connection
+        tgt2, cross_attn_weight = self.multihead_attn(query=self.with_pos_embed(tgt, query_pos),
+                                   key=self.with_pos_embed(memory, pos),
+                                   value=memory, attn_mask=None,
+                                   key_padding_mask=None)
         tgt = tgt + self.dropout2(tgt2)
-        # normalization
         tgt = self.norm2(tgt)
-        # Feedforward Network
         tgt2 = self.linear2(self.dropout(self.activation(self.linear1(tgt))))
-        # skip-conncetion & normalization
         tgt = tgt + self.dropout3(tgt2)
         tgt = self.norm3(tgt)
-        #print("디코더",tgt.shape)
-        return tgt
+        return tgt, self_attn_weight, cross_attn_weight
 
-    def forward_pre(
-        self,
-        tgt,
-        memory,
-        tgt_mask: Optional[Tensor] = None,
-        memory_mask: Optional[Tensor] = None,
-        tgt_key_padding_mask: Optional[Tensor] = None,
-        memory_key_padding_mask: Optional[Tensor] = None,
-        pos: Optional[Tensor] = None,
-        query_pos: Optional[Tensor] = None,
-    ):
+    def forward_pre(self, tgt, memory,
+                    tgt_mask: Optional[Tensor] = None,
+                    memory_mask: Optional[Tensor] = None,
+                    tgt_key_padding_mask: Optional[Tensor] = None,
+                    memory_key_padding_mask: Optional[Tensor] = None,
+                    pos: Optional[Tensor] = None,
+                    query_pos: Optional[Tensor] = None):
         tgt2 = self.norm1(tgt)
         q = k = self.with_pos_embed(tgt2, query_pos)
-        tgt2, _ = self.self_attn(
-            q, k, value=tgt2, attn_mask=tgt_mask, key_padding_mask=tgt_key_padding_mask
-        )
+        tgt2, self_attn_weight = self.self_attn(q, k, value=tgt2, attn_mask=None,
+                              key_padding_mask=None)
         tgt = tgt + self.dropout1(tgt2)
         tgt2 = self.norm2(tgt)
-        tgt2, _ = self.multihead_attn(
-            query=self.with_pos_embed(tgt2, query_pos),
-            key=self.with_pos_embed(memory, pos),
-            value=memory,
-            attn_mask=memory_mask,
-            key_padding_mask=memory_key_padding_mask,
-        )
+        tgt2, cross_attn_weight = self.multihead_attn(query=self.with_pos_embed(tgt2, query_pos),
+                                   key=self.with_pos_embed(memory, pos),
+                                   value=memory, attn_mask=None,
+                                   key_padding_mask=None)
         tgt = tgt + self.dropout2(tgt2)
         tgt2 = self.norm3(tgt)
         tgt2 = self.linear2(self.dropout(self.activation(self.linear1(tgt2))))
         tgt = tgt + self.dropout3(tgt2)
-        return tgt
+        return tgt, self_attn_weight, cross_attn_weight
 
-    ## key_padding???
-    def forward(
-        self,
-        tgt,
-        memory,
-        tgt_mask: Optional[Tensor] = None,
-        memory_mask: Optional[Tensor] = None,
-        tgt_key_padding_mask: Optional[Tensor] = None,
-        memory_key_padding_mask: Optional[Tensor] = None,
-        pos: Optional[Tensor] = None,
-        query_pos: Optional[Tensor] = None,
-    ):
+    def forward(self, tgt, memory,
+                tgt_mask: Optional[Tensor] = None,
+                memory_mask: Optional[Tensor] = None,
+                tgt_key_padding_mask: Optional[Tensor] = None,
+                memory_key_padding_mask: Optional[Tensor] = None,
+                pos: Optional[Tensor] = None,
+                query_pos: Optional[Tensor] = None):
         if self.normalize_before:
-            return self.forward_pre(
-                tgt,
-                memory,
-                tgt_mask,
-                memory_mask,
-                tgt_key_padding_mask,
-                memory_key_padding_mask,
-                pos,
-                query_pos,
-            )
-        return self.forward_post(
-            tgt,
-            memory,
-            tgt_mask,
-            memory_mask,
-            tgt_key_padding_mask,
-            memory_key_padding_mask,
-            pos,
-            query_pos,
-        )
+            return self.forward_pre(tgt, memory, tgt_mask, memory_mask,
+                                    tgt_key_padding_mask, memory_key_padding_mask, pos, query_pos)
+        return self.forward_post(tgt, memory, tgt_mask, memory_mask,
+                                 tgt_key_padding_mask, memory_key_padding_mask, pos, query_pos)
 
 
 def _get_clones(module, N):
-    # Deepcopy로 모듈을 N개만큼 넣어서 ModuleList로 만들어줌
     return nn.ModuleList([copy.deepcopy(module) for i in range(N)])
 
-
 def build_transformer(cfg):
-    return Transformer(
-        d_model=cfg.MODELS.TRANSFORMER.HIDDEN_DIM,
-        dropout=cfg.MODELS.TRANSFORMER.DROPOUT,
-        nhead=cfg.MODELS.TRANSFORMER.NHEADS,
-        dim_feedforward=cfg.MODELS.TRANSFORMER.DIM_FEEDFORWARD,
-        num_encoder_layers=cfg.MODELS.TRANSFORMER.ENC_LAYERS,
-        num_decoder_layers=cfg.MODELS.TRANSFORMER.DEC_LAYERS,
-        normalize_before=cfg.MODELS.TRANSFORMER.PRE_NORM,
-        return_intermediate_dec=True,
-    )
+    return TransformerEncoder(
+        encoder_layer = TransformerEncoderLayer(d_model=cfg.MODELS.TRANSFORMER.HIDDEN_DIM,
+                                                 nhead=cfg.MODELS.TRANSFORMER.NHEADS,
+                                                 dim_feedforward=cfg.MODELS.TRANSFORMER.DIM_FEEDFORWARD,
+                                                 dropout=cfg.MODELS.TRANSFORMER.DROPOUT,
+                                                 normalize_before=cfg.MODELS.TRANSFORMER.PRE_NORM),
+                                                num_layers=cfg.MODELS.TRANSFORMER.ENC_LAYERS,)
 
 
 def _get_activation_fn(activation):
@@ -469,4 +332,4 @@ def _get_activation_fn(activation):
         return F.gelu
     if activation == "glu":
         return F.glu
-    raise RuntimeError(f"activation should be relu/gelu, not {activation}.")
+    raise RuntimeError(F"activation should be relu/gelu, not {activation}.")

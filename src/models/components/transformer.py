@@ -2,6 +2,10 @@ from typing import List, Optional
 import torch
 import torch.nn as nn
 from .linear_attention import LinearAttention, FullAttention
+from einops import rearrange
+from torch import nn, Tensor
+import torch.nn.functional as F
+import copy
 
 
 class LoFTREncoderLayer(nn.Module):
@@ -24,12 +28,12 @@ class LoFTREncoderLayer(nn.Module):
         # feed-forward network
         self.mlp = nn.Sequential(
             nn.Linear(d_model*2, d_model*2, bias=False),
-            nn.ReLU(True),
+            nn.ReLU(),
             nn.Linear(d_model*2, d_model, bias=False),
         )
 
         # norm and dropout
-        self.norm1 = nn.LayerNorm(d_model)
+        self.norm1 = nn.LayerNorm(d_model)      
         self.norm2 = nn.LayerNorm(d_model)
 
     def forward(
@@ -132,3 +136,17 @@ class LocalFeatureTransformer(nn.Module):
                 raise KeyError
 
         return feat0, feat1
+
+def _get_activation_fn(activation):
+    """Return an activation function given a string"""
+    if activation == "relu":
+        return F.relu
+    if activation == "gelu":
+        return F.gelu
+    if activation == "glu":
+        return F.glu
+    raise RuntimeError(F"activation should be relu/gelu, not {activation}.")    
+
+def _get_clones(module, N):
+    return nn.ModuleList([copy.deepcopy(module) for i in range(N)])
+

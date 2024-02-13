@@ -119,7 +119,7 @@ def sample_vert_segs_np(segs, thresh_theta=22.5):
     )
 
 
-path = "/home/kmuvcl/source/oldCuTi/CuTi/matterport/mp3d_planercnn_json/cached_set_val.json"
+path = "/home/kmuvcl/source/oldCuTi/CuTi/matterport/mp3d_planercnn_json/cached_set_train.json"
 root = "/home/kmuvcl/source/oldCuTi/CuTi/matterport/"
 
 with open(osp.join(path)) as f:
@@ -187,16 +187,16 @@ for i in tqdm(range(len(split["data"]))):
             csv_file_name[9] = img_name.split("/")[9].split(".")[0] + "_line.csv"
             Line_image_name = "/".join(Line_image_name)
             csv_file_name = "/".join(csv_file_name)
-            print("cv2:",Line_image_name)
+            # print("cv2:",Line_image_name)
             cv2.imwrite(Line_image_name, drawn_img)
-            print(lines)
+            # print(lines)
             data_df = pd.DataFrame(lines[0][0])
             data_df = data_df.T
             for i in range(1, len(lines)):
                 data_df2 = pd.DataFrame(lines[i][0])
                 data_df2 = data_df2.T
                 data_df = pd.concat([data_df, data_df2])
-            print("cv3:", csv_file_name)
+            # print("cv3:", csv_file_name)
             data_df.to_csv(csv_file_name, index=False, header=None)
 
 

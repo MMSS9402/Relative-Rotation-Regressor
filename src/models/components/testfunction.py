@@ -2,7 +2,7 @@ import cv2
 from tqdm import tqdm
 import numpy as np
 import torch
-import lietorch
+# import lietorch
 import os
 import glob
 import time
@@ -19,7 +19,7 @@ from collections import OrderedDict
 import pickle
 import json
 from typing import Callable
-from lietorch import SE3
+# from lietorch import SE3
 
 
 class Testcamera(Callable):
@@ -31,25 +31,23 @@ class Testcamera(Callable):
         
         predictions = predictions
         
-        # preds = pose_preds[0][0][1].data.cpu().numpy()
-        preds = pose_preds[0].data.cpu().numpy()
-        print("preds",pose_preds[0].data)
-        #print(preds.shape)
-        preds = preds[:,1,:]
-        #print(preds.shape)
+        preds = pose_preds.data.cpu().numpy()
+        # preds = preds[:,1,:]
+        preds = preds
         pr_copy = np.copy(preds)
         
         preds[:,3] = pr_copy[:,6] # swap 3 & 6, we used W last; want W first in quat
         preds[:,6] = pr_copy[:,3]
         preds[:,:3] = preds[:,:3] * 5
+
+        
         
         predictions['camera']['preds']['tran'].append(preds[:,:3])
         predictions['camera']['preds']['rot'].append(preds[:,3:])
-        #print("________________-")
-        #print(gt.shape)
+        
         gt = gt[:,1,:]#.squeeze(0)
         gt = gt.data.cpu().numpy()
-        #print(gt.shape)
+
         gt_copy = np.copy(gt)
         gt[:,3] = gt_copy[:,6] # swap 3 & 6, we used W last; want W first in quat
         gt[:,6] = gt_copy[:,3]
@@ -57,6 +55,14 @@ class Testcamera(Callable):
         gt_tran = gt[:,:3]
         gt_rotation = gt[:,3:]
         batch_size = gt_rotation.shape[0]
+
+        # for i in range(batch_size):
+        #     if preds[i,3] < 0: # normalize quaternions to have positive "W" (equivalent)
+        #         preds[i,3] *= -1
+        #         preds[i,4] *= -1
+        #         preds[i,5] *= -1
+        #         preds[i,6] *= -1
+        
         for i in range(batch_size):
             if gt_rotation[i,0] < 0: # normalize quaternions to have positive "W" (equivalent)
                 gt_rotation[i,0] *= -1

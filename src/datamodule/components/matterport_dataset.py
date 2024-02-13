@@ -1,7 +1,10 @@
 import os
 import json
+import csv
+from tqdm import tqdm
 
 import numpy as np
+import numpy.linalg as LA
 
 from src.datamodule.components.base import RGBDDataset
 
@@ -25,6 +28,18 @@ class MatterportDataset(RGBDDataset):
             use_mini_dataset=use_mini_dataset,
         )
 
+    def read_line_file(self, filename: str, min_line_length=10):
+        segs = []  # line segments
+
+        with open(filename, "r") as csvfile:
+            csvreader = csv.reader(csvfile)
+            for row in csvreader:
+                segs.append([float(row[0]), float(row[1]), float(row[2]), float(row[3])])
+        segs = np.array(segs, dtype=np.float32)
+        lengths = LA.norm(segs[:, 2:] - segs[:, :2], axis=1)
+        segs = segs[lengths > min_line_length]
+        return segs
+
     def _build_dataset(self):
         base_pose = np.array([0, 0, 0, 0, 0, 0, 1])
 
@@ -37,17 +52,17 @@ class MatterportDataset(RGBDDataset):
         poses_list = []
         intrinsics_list = []
 
-        basepath = "/Pool1/users/jinlinyi/dataset/mp3d_rpnet_v4_sep20"
+        original_basepath = "/Pool1/users/jinlinyi/dataset/mp3d_rpnet_v4_sep20"
 
-        for data in split["data"].values():
+        print("build dataset ...")
+        for data in tqdm(split["data"].values()):
             vps = []
             images = []
             lines = []
             for img_idx in ["0", "1"]:
-                img_path = data[img_idx]["file_name"].replace(basepath, self.data_path)
-                line_path = img_path.replace(".png", "_line.csv",)
-                # print("img_path",img_path)
-                # print('line_path',line_path)
+                img_path = data[img_idx]["file_name"].replace(original_basepath, self.data_path)
+                # line_path = img_path.replace(".png", "_line.csv",)
+
                 vp1 = data[img_idx]['vp1']
                 vp2 = data[img_idx]['vp2']
                 vp3 = data[img_idx]['vp3']
@@ -56,7 +71,7 @@ class MatterportDataset(RGBDDataset):
                 vps.append(gt_vps)
 
                 images.append(img_path)
-                lines.append(line_path)
+                # lines.append(self.read_line_file(line_path, min_line_length=10))
 
             rel_pose = np.array(data["rel_pose"]["position"] + data["rel_pose"]["rotation"])
 
@@ -67,7 +82,7 @@ class MatterportDataset(RGBDDataset):
             rel_pose[6], rel_pose[3] = rel_pose[3], rel_pose[6]
 
             # normalize quaternions to have positive "W"
-            if rel_pose[6] < 0:
+            if rel_pose[6] < 0: #6
                 rel_pose[3:] *= -1
             poses = np.vstack([base_pose, rel_pose])
 
@@ -76,7 +91,7 @@ class MatterportDataset(RGBDDataset):
             )  # 480 x 640 imgs
 
             images_list.append(images)
-            lines_list.append(lines)
+            # lines_list.append(lines)
             vps_list.append(vps)
             poses_list.append(poses)
             intrinsics_list.append(intrinsics)
@@ -85,7 +100,7 @@ class MatterportDataset(RGBDDataset):
             "images": images_list,
             "poses": poses_list,
             "intrinsics": intrinsics_list,
-            "lines": lines_list,
+            # "lines": lines_list,
             'vps': vps_list,
         }
         return scene_info

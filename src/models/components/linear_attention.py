@@ -1,5 +1,6 @@
 import torch
 from torch.nn import Module, Dropout
+from einops import rearrange
 
 
 def elu_feature_map(x):
@@ -23,6 +24,7 @@ class LinearAttention(Module):
         Returns:
             queried_values: (N, L, H, D)
         """
+
         Q = self.feature_map(queries)
         K = self.feature_map(keys)
 
@@ -67,7 +69,8 @@ class FullAttention(Module):
 
         # Compute the attention and the weighted average
         softmax_temp = 1. / queries.size(3)**.5  # sqrt(D)
-        A = torch.softmax(softmax_temp * QK, dim=2)
+        A = torch.softmax(softmax_temp * QK, dim=2) 
+
         if self.use_dropout:
             A = self.dropout(A)
 
@@ -107,3 +110,45 @@ class FullAttentionDualSoftmax(Module):
         queried_values = torch.einsum("nlsh,nshd->nlhd", A, values)
 
         return queried_values.contiguous()
+
+class BilinearAttention(Module):
+    def __init__(self, use_dropout=False, attention_dropout=0.1):
+        super().__init__()
+        self.use_dropout = use_dropout
+        self.dropout = Dropout(attention_dropout)
+
+    def forward(self, queries, keys, values1, values2, q_mask=None, kv_mask=None):
+        """ Multi-head scaled dot-product attention, a.k.a full attention.
+        Args:
+            queries: [N, L, H, D]
+            keys: [N, S, H, D]
+            values: [N, S, H, D]
+            q_mask: [N, L]
+            kv_mask: [N, S]
+        Returns:
+            queried_values: (N, L, H, D)
+        """
+        #print("self_queries_dim",queries.shape)
+        # Compute the unnormalized attention and apply the masks
+
+        QK = torch.einsum("nlhd,nshd->nlsh", queries, keys)
+        if kv_mask is not None:
+            QK.masked_fill_(~(q_mask[:, :, None, None] * kv_mask[:, None, :, None]), float('-inf'))
+
+        # Compute the attention and the weighted average
+        softmax_temp = 1. / queries.size(3)**.5  # sqrt(D)
+        A = torch.softmax(softmax_temp * QK, dim=2) * torch.softmax(softmax_temp*QK,dim=1)
+        if self.use_dropout:
+            A = self.dropout(A)
+
+        # queried_values = torch.einsum("nlsh,nshd->nlhd", A, values1)
+        # va = torch.einsum("nlsh,nshd->nlhd", values1, A)
+        # vav = torch.einsum("nlsh,nshd->nlhd", va, values2)
+        A = rearrange(A,"b i l h -> b h i l").contiguous()
+        values1 = rearrange(values1,"b i h l -> b h i l").contiguous()
+        values2 = rearrange(values2,"b i h l -> b h i l").contiguous()
+        vav = values1.transpose(-2,-1) @ A @ values2
+        B, h, C, ch = vav.shape
+        vav = vav.reshape(B,h*C,ch)
+        return vav.contiguous()
+

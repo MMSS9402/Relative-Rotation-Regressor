@@ -1,19 +1,39 @@
-from typing import Any, List
+from typing import Any, List, Optional
 import sys
 import os
+import os.path as osp
+import time
+import wandb
+import h5py
+
+import torch.nn.functional as F
+import torch.nn as nn
+import torch.nn.init as init
+
 import numpy as np
 import hydra.utils
 from pytorch_lightning import LightningModule
 import pyrootutils
 import torch
 import torch.nn as nn
-from lietorch import SE3
+# from lietorch import SE3
 from omegaconf import DictConfig
 from einops import rearrange
+import cv2
+from torch import linalg as LA
 
 root = pyrootutils.find_root(__file__)
 sys.path.insert(0, str(root / "ctrlc"))
 from ctrlc.model.ctrlc_model import GPTran, build_ctrlc
+
+from src.utils.generate_epipolar_image import (generate_epipolar_image,
+                                               convert_tensor_to_cv_image,
+                                               convert_tensor_to_numpy_array,
+                                               )
+
+
+import matplotlib as mpl
+import matplotlib.pyplot as plt
 
 
 class CuTiLitModule(LightningModule):
@@ -21,7 +41,9 @@ class CuTiLitModule(LightningModule):
             self,
             ctrlc: DictConfig,
             ctrlc_checkpoint_path: str,
+            # linetr: DictConfig,
             transformer: DictConfig,
+            vptransformer: DictConfig,
             pos_encoder: DictConfig,
             max_num_line: int,
             hidden_dim: int,
@@ -34,7 +56,6 @@ class CuTiLitModule(LightningModule):
             scheduler: DictConfig,
             matcher: DictConfig,
             vp_criterion: DictConfig,
-            Rel_criterion: DictConfig,
     ):
         super().__init__()
 
@@ -42,142 +63,253 @@ class CuTiLitModule(LightningModule):
         # also ensures init params will be stored in ckpt
         self.save_hyperparameters()
 
-        # assert os.path.exists(ctrlc_checkpoint_path), "ctrlc checkpoint must be exists!"
+        assert os.path.exists(ctrlc_checkpoint_path), "ctrlc checkpoint must be existed!"
         ctrlc_checkpoint = torch.load(ctrlc_checkpoint_path)
+
         self.predictions = {'camera': {'preds': {'tran': [], 'rot': []}, 'gts': {'tran': [], 'rot': []}}}
         self.vp_loss0 = []
         self.vp_loss1 = []
+
         self.ctrlc: GPTran = build_ctrlc(ctrlc)
+        # self.ctrlc1: GPTran = build_ctrlc(ctrlc)
         self.ctrlc.load_state_dict(ctrlc_checkpoint["model"], strict=False)
         self.ctrlc.requires_grad_(False)
         self.ctrlc.eval()
+        
+        self.thresh_line_pos = np.cos(np.radians(88.0), dtype=np.float32) # near 0.0
+        self.thresh_line_neg = np.cos(np.radians(85.0), dtype=np.float32)
 
         self.num_image = 2
         self.num_vp = 3
+        self.num_head = 8
         self.max_num_line = max_num_line
         self.hidden_dim = hidden_dim
+        self.vp_embed0 = nn.Embedding(self.num_vp, hidden_dim)
+        self.vp_embed1 = nn.Embedding(self.num_vp, hidden_dim)
 
         self.pos_encoder = hydra.utils.instantiate(pos_encoder)
 
-        self.feature_embed = nn.Linear(256, self.hidden_dim) # 128
-
         self.image_idx_embedding = nn.Embedding(self.num_image, self.hidden_dim)
-        self.line_idx_embedding = nn.Embedding(3, self.hidden_dim)
+        self.line_idx_embedding = nn.Embedding(self.max_num_line, self.hidden_dim)
 
         self.transformer_block = hydra.utils.instantiate(transformer)
+        self.vptransformer_block = hydra.utils.instantiate(vptransformer)
 
-        self.pool_transformer_output = nn.Sequential(
-            nn.Conv2d(hidden_dim, pool_channels[0], kernel_size=1, bias=False),
-            nn.BatchNorm2d(pool_channels[0]),
+        translation_regressor_dim = 9
+        rotation_regressor_dim = 9
+        in_channels = 6
+        self.translation_regressor = nn.Sequential(
+            nn.Linear(translation_regressor_dim, translation_regressor_dim),
             nn.ReLU(),
-            nn.Conv2d(pool_channels[0], pool_channels[1], kernel_size=1, bias=False),
-            nn.BatchNorm2d(pool_channels[1])
+            nn.Linear(translation_regressor_dim, translation_regressor_dim),
+            nn.ReLU(),
+            nn.Linear(translation_regressor_dim, 3),
+        )
+        self.rotation_regressor = nn.Sequential(
+            nn.Linear(rotation_regressor_dim, rotation_regressor_dim),
+            nn.ReLU(),
+            nn.Linear(rotation_regressor_dim, rotation_regressor_dim),
+            nn.ReLU(),
+            nn.Linear(rotation_regressor_dim, 4),
         )
 
-        pose_regressor_input_dim = int(self.num_image * pool_channels[1] * (3))
-
-        self.pose_regressor = nn.Sequential(
-            nn.Linear(pose_regressor_input_dim, pose_regressor_hidden_dim),
+        self.conv = nn.Sequential(
+            nn.Conv1d(in_channels, in_channels, kernel_size=1, stride=1, padding=0, bias=False),
             nn.ReLU(),
-            nn.Linear(pose_regressor_hidden_dim, pose_regressor_hidden_dim),
+            nn.Conv1d(in_channels, in_channels, kernel_size=1, stride=1, padding=0, bias=False),
             nn.ReLU(),
-            nn.Linear(pose_regressor_hidden_dim, self.num_image * pose_size),
-            nn.Unflatten(1, (self.num_image, pose_size)),
+            nn.Conv1d(in_channels, 3, kernel_size=1, stride=1, padding=0, bias=False),
+            nn.Linear(self.hidden_dim, self.hidden_dim),
+            nn.ReLU(),
+            nn.Linear(self.hidden_dim, self.hidden_dim),
+            nn.ReLU(),
+            nn.Linear(self.hidden_dim, 3)
         )
+
+        self.img0_vp0_embed = nn.Linear(hidden_dim, 3)
+        self.img0_vp1_embed = nn.Linear(hidden_dim, 3)
+        self.img0_vp2_embed = nn.Linear(hidden_dim, 3)
+
+        self.img1_vp0_embed = nn.Linear(hidden_dim, 3)
+        self.img1_vp1_embed = nn.Linear(hidden_dim, 3)
+        self.img1_vp2_embed = nn.Linear(hidden_dim, 3)
+
+        self.maxpool = nn.MaxPool2d(2, 1)
+
+        self.direction_embed0 = nn.Embedding(3, self.hidden_dim)
+        self.direction_embed1 = nn.Embedding(3, self.hidden_dim)
 
         self.criterion = hydra.utils.instantiate(criterion)
         self.test_camera = hydra.utils.instantiate(test_metric)
-        
+
         self.matcher = hydra.utils.instantiate(matcher)
         self.vp_criterion = hydra.utils.instantiate(vp_criterion)
-        self.Rel_criterion = hydra.utils.instantiate(Rel_criterion)
 
         self.optimizer = optimizer
         self.scheduler = scheduler
+        # self.automatic_optimization = False
 
-    def forward(self, images: torch.Tensor, lines: torch.Tensor,endpoint: torch.Tensor):
+    def forward(self, images: torch.Tensor, target):
+        endpoint = target['endpoint']
+        vps = rearrange(target['vps'], "b i l c -> i b l c ").contiguous()
+        batch_size = vps.shape[1]
 
-        endpoint[0] = torch.tensor(endpoint[0],dtype=torch.float32)
-        endpoint[1] = torch.tensor(endpoint[1],dtype=torch.float32)
-        # print("lines",lines[0])
-        # [dec_layer, bs, line_num, hidden_dim]
-        hs0, memory0, pred0_vp0, pred0_vp1, pred0_vp2 = self.ctrlc(
-            images[:, 0],
-            lines[:, 0]
-        )
-        hs1, memory1, pred1_vp0, pred1_vp1, pred1_vp2 = self.ctrlc(
-            images[:, 1],
-            lines[:, 1]
-        )
-        pred0_vp = torch.cat([torch.cat([pred0_vp0.unsqueeze(1),pred0_vp1.unsqueeze(1)],dim=1),pred0_vp2.unsqueeze(1)],dim=1)
-        pred1_vp = torch.cat([torch.cat([pred1_vp0.unsqueeze(1),pred1_vp1.unsqueeze(1)],dim=1),pred1_vp2.unsqueeze(1)],dim=1)
-        # hs0 = rearrange(hs0, "d b n c -> b n c d").contiguous()
-        # hs1 = rearrange(hs1, "d b n c -> b n c d").contiguous()
-        # using last decoder layer's feature
-        hs0 = hs0[-1]  # [b x n x c]
-        hs1 = hs1[-1]
+        normal0 = target['normal0']
+        normal1 = target['normal1']
+        lmask0 = target['lmask0']
+        lmask1 = target['lmask1']
 
-        batch_size = hs0.shape[0]
-        #print(batch_size)
+        # desc0 = target['desc_sublines0'] # [10, 250, 21, 256] [b line pointm channel]
+        # desc1 = target['desc_sublines1']
 
-        # hs0 = self.feature_embed(hs0)
-        # hs1 = self.feature_embed(hs1)
-        hs0 = hs0 + self.image_idx_embedding.weight[0] + self.line_idx_embedding.weight
-        hs1 = hs1 + self.image_idx_embedding.weight[1] + self.line_idx_embedding.weight
+
+        # desc0 = rearrange(desc0,'b l p c -> (b l) c p').contiguous()
+        # desc0 = F.max_pool1d(desc0, kernel_size=21, stride=1)
+        # desc0 = rearrange(desc0, '(b l) c p -> b l p c',l=250,b=batch_size).contiguous().squeeze(2)
+
+        # desc1 = rearrange(desc1,'b l p c -> (b l) c p').contiguous()
+        # desc1 = F.max_pool1d(desc1, kernel_size=21, stride=1)
+        # desc1 = rearrange(desc1, '(b l) c p -> b l p c',l=250,b=batch_size).contiguous().squeeze(2)
+
+
+        hs0, ctrlc_output0 = self.ctrlc(normal0,lmask0,None)
+        hs1, ctrlc_output1 = self.ctrlc(normal1,lmask1,None)
+
+        feat0 = hs0[:,:3]
+        feat1 = hs1[:,:3]
+
+        # vp_mask = torch.ones_like(hs0[:,:3,0]).unsqueeze(-1)
+
+        # line_mask0 = torch.cat([vp_mask,ctrlc_output0['line_mask']],dim=1).squeeze(-1)
+        # line_mask1 = torch.cat([vp_mask,ctrlc_output1['line_mask']],dim=1).squeeze(-1)
+
+        # hs0[:,3:,:] = hs0[:,3:,:] + desc0 #+ self.line_idx_embedding.weight
+        # hs1[:,3:,:] = hs1[:,3:,:] + desc1 #+ self.line_idx_embedding.weight
+ 
+        # hs0 = hs0 + self.image_idx_embedding.weight[0]
+        # hs1 = hs1 + self.image_idx_embedding.weight[1]
+
+        feat0,feat1 = self.transformer_block(feat0,feat1,mask0=None,mask1=None) #feat0,feat1 => [b line+vp hidden_dim]
+
+        # img0_vp0 = self.img0_vp0_embed(hs0[:,0,:])
+        # img0_vp1 = self.img0_vp1_embed(hs0[:,1,:])
+        # img0_vp2 = self.img0_vp2_embed(hs0[:,2,:])
+
+        # img1_vp0 = self.img1_vp0_embed(hs1[:,0,:])
+        # img1_vp1 = self.img1_vp1_embed(hs1[:,1,:])
+        # img1_vp2 = self.img1_vp2_embed(hs1[:,2,:])
+
+        # pred_view0_vps = torch.cat([img0_vp0.unsqueeze(1),
+        #                             img0_vp1.unsqueeze(1),
+        #                             img0_vp2.unsqueeze(1)], dim=1)
         
-        # feat0 = torch.cat([hs0 ], dim=1)
-        # feat1 = torch.cat([hs1 ], dim=1)
-        feat0 = hs0
-        feat1 = hs1
-        feat0, feat1 = self.transformer_block(feat0, feat1)
+        # pred_view1_vps = torch.cat([img1_vp0.unsqueeze(1),
+        #                             img1_vp1.unsqueeze(1),
+        #                             img1_vp2.unsqueeze(1)], dim=1)
 
-        feat = torch.cat([feat0.unsqueeze(0), feat0.unsqueeze(0)], dim=0)
-        feat = feat.reshape([batch_size, self.num_image, 3, -1])
-        feat = rearrange(feat, "b i l c -> b c i l").contiguous()
-
-        pooled_feat = self.pool_transformer_output(feat)
-        pose_preds = self.pose_regressor(pooled_feat.reshape([batch_size, -1]))
+        # feat0 = hs0[:,:3,:]
+        # feat1 = hs1[:,:3,:]
         
-        #print(pose_preds)
-#self.normalize_preds(pose_preds)
-        return self.normalize_preds(pose_preds), pred0_vp, pred1_vp
+        # feat0 = torch.cat([ctrlc_output0['pred_view_vps'],hs0[:,:3,:]],dim=2)
+        # feat1 = torch.cat([ctrlc_output1['pred_view_vps'],hs1[:,:3,:]],dim=2)
 
-    def normalize_preds(self, pose_preds):
-        pred_out_Gs = SE3(pose_preds)
-        #print("pose_pred",pose_preds.data)
-        Gs = SE3.IdentityLike(pred_out_Gs)
-        #print("gs",Gs.data.shape)
-        normalized = pred_out_Gs.data[:, :, 3:].norm(dim=-1).unsqueeze(2)
-        #print(normalized)
+        feat = torch.cat([feat0,feat1],dim=1)
+        # feat0,feat1 = self.vptransformer_block(hs0[:,:3,:],hs1[:,:3,:])
+        
+        # confidence_mat = feat0 @ feat1.transpose(-2,-1)
+
+        #vp_feat = torch.cat([feat0[:,:3,:],feat1[:,:3,:]],dim=1)
+        # feat = torch.cat([feat0,feat1],dim=1) #[b, 506 ,256]
+
+        feat = self.conv(feat) #[b, 3, 3]
+        
+        feat = rearrange(feat, 'b i h -> b (i h)').contiguous()
+        
+        R = self.rotation_regressor(feat)
+        T = self.translation_regressor(feat)
+        
+        pose_preds = torch.cat([T,R],dim=1)
+
+        pred_view0_vps = ctrlc_output0['pred_view_vps']
+        pred_view1_vps = ctrlc_output1['pred_view_vps']
+
+
+        return {"pred_pose": self.normalize_preds(pose_preds),
+                "pred_view0_vps": pred_view0_vps,
+                "pred_view1_vps": pred_view1_vps,
+                }
+        
+    def load_h5py_to_dict(self, file_path):
+        with h5py.File(file_path, 'r') as f:
+            return {key: torch.tensor(f[key][:]) for key in f.keys()}
+
+    def normalize_preds(self, pred_poses):
+        pred_quaternion = pred_poses[:, 3:]
+        normalized = torch.norm(pred_quaternion, dim=-1, keepdim=True)
         eps = torch.ones_like(normalized) * .01
-        pred_out_Gs_new = SE3(torch.clone(pred_out_Gs.data))
-        pred_out_Gs_new.data[:, :, 3:] = pred_out_Gs.data[:, :, 3:] / torch.max(normalized, eps)
+        normalize_quat = pred_quaternion / torch.max(normalized, eps)
 
-        these_out_Gs = SE3(torch.cat([Gs[:, :1].data, pred_out_Gs_new.data[:, 1:]], dim=1))
-        out_Gs = [these_out_Gs]
-        return out_Gs
+        return torch.cat([pred_poses[:, :3], normalize_quat], dim=1)
+
+    def positional_encoding(self, d_model, pos):
+        pos_enc = torch.zeros((pos.shape[0], pos.shape[1], d_model))
+        for i in range(0, d_model, 2):
+            pos_enc[:, :, i] = torch.sin(pos / 10000 ** (2 * i / d_model))
+            pos_enc[:, :, i + 1] = torch.cos(pos / 10000 ** (2 * i / d_model))
+        return pos_enc
+
+    def _get_src_permutation_idx(self, indices):
+        # permute predictions following indices
+        batch_idx = torch.cat([torch.full_like(src, i) for i, (src, _) in enumerate(indices)])
+        src_idx = torch.cat([src for (src, _) in indices])
+        return batch_idx, src_idx
+
+    def _get_tgt_permutation_idx(self, indices):
+        # permute targets following indices
+        batch_idx = torch.cat([torch.full_like(tgt, i) for i, (_, tgt) in enumerate(indices)])
+        tgt_idx = torch.cat([tgt for (_, tgt) in indices])
+        return batch_idx, tgt_idx
     
+    def endpoints_pooling(self, segs, all_descriptors, img_shape):
+        assert segs.ndim == 4 and segs.shape[-2:] == (2, 2)
+        filter_shape = all_descriptors.shape[-2:]
+        scale_x = filter_shape[1] / img_shape[1]
+        scale_y = filter_shape[0] / img_shape[0]
 
-    def eval_camera(self,predictions):
+        scaled_segs = torch.round(segs * torch.tensor([scale_x, scale_y]).to(segs)).long()
+        scaled_segs[..., 0] = torch.clip(scaled_segs[..., 0], 0, filter_shape[1] - 1)
+        scaled_segs[..., 1] = torch.clip(scaled_segs[..., 1], 0, filter_shape[0] - 1)
+        line_descriptors = [all_descriptors[None, b, ..., torch.squeeze(b_segs[..., 1]), torch.squeeze(b_segs[..., 0])]
+                            for b, b_segs in enumerate(scaled_segs)]
+        line_descriptors = torch.cat(line_descriptors)
+        return line_descriptors 
+
+    def _to_structure_tensor(self, params):
+            (a, b, c) = torch.unbind(params, dim=-1)
+            return torch.stack([a * a, a * b, b * b, b * c, c * c, c * a], dim=-1)
+
+    def eval_camera(self, predictions):
         acc_threshold = {
-        "tran": 1.0,
-        "rot": 30,
+            "tran": 1.0,
+            "rot": 30,
         }
+
         pred_tran = np.vstack(predictions["camera"]["preds"]["tran"])
         pred_rot = np.vstack(predictions["camera"]["preds"]["rot"])
-        
+
         gt_tran = np.vstack(predictions["camera"]["gts"]["tran"])
         gt_rot = np.vstack(predictions["camera"]["gts"]["rot"])
 
         top1_error = {
             "tran": np.linalg.norm(gt_tran - pred_tran, axis=1),
-            "rot": 2 * np.arccos(np.clip(np.abs(np.sum(np.multiply(pred_rot, gt_rot), axis=1)), -1.0, 1.0)) * 180 / np.pi,
+            "rot": 2 * np.arccos(
+                np.clip(np.abs(np.sum(np.multiply(pred_rot, gt_rot), axis=1)), -1.0, 1.0)) * 180 / np.pi,
         }
         top1_accuracy = {
             "tran": (top1_error["tran"] < acc_threshold["tran"]).sum()
-            / len(top1_error["tran"]),
+                    / len(top1_error["tran"]),
             "rot": (top1_error["rot"] < acc_threshold["rot"]).sum()
-            / len(top1_error["rot"]),
+                   / len(top1_error["rot"]),
         }
         camera_metrics = {
             f"top1 T err < {acc_threshold['tran']}": top1_accuracy["tran"] * 100,
@@ -187,92 +319,163 @@ class CuTiLitModule(LightningModule):
             f"T median err": np.median(top1_error["tran"]),
             f"R median err": np.median(top1_error["rot"]),
         }
-        gt_mags = {"tran": np.linalg.norm(gt_tran, axis=1), "rot": 2 * np.arccos(gt_rot[:,0]) * 180 / np.pi}
-        pred_mags = {"tran":np.linalg.norm(pred_tran, axis=1), "rot": 2 * np.arccos(pred_rot[:,0]) * 180 / np.pi}
-        
-        tran_graph = np.stack([gt_mags['tran'], pred_mags['tran'],top1_error['tran']],axis=1)
-        tran_graph_name = os.path.join('/home/kmuvcl/source/oldCuTi/CuTi/logs/output2', 'gt_translation_magnitude_vs_error.csv')
+        gt_mags = {"tran": np.linalg.norm(gt_tran, axis=1), "rot": 2 * np.arccos(gt_rot[:, 0]) * 180 / np.pi}
+        pred_mags = {"tran": np.linalg.norm(pred_tran, axis=1), "rot": 2 * np.arccos(pred_rot[:, 0]) * 180 / np.pi}
+
+        os.makedirs("./output2", exist_ok=True)
+
+        tran_graph = np.stack([gt_mags['tran'], pred_mags['tran'], top1_error['tran']], axis=1)
+        tran_graph_name = os.path.join('./output2', 'gt_translation_magnitude_vs_error.csv')
         np.savetxt(tran_graph_name, tran_graph, delimiter=',', fmt='%1.5f')
 
-        rot_graph = np.stack([gt_mags['rot'],pred_mags['rot'], top1_error['rot']],axis=1)
-        rot_graph_name = os.path.join('/home/kmuvcl/source/oldCuTi/CuTi/logs/output2', 'gt_rotation_magnitude_vs_error.csv')
+        rot_graph = np.stack([gt_mags['rot'], pred_mags['rot'], top1_error['rot']], axis=1)
+        rot_graph_name = os.path.join('./output2', 'gt_rotation_magnitude_vs_error.csv')
         np.savetxt(rot_graph_name, rot_graph, delimiter=',', fmt='%1.5f')
         return camera_metrics
 
     def on_train_start(self):
         pass
-    
-    def shared_step(self, batch: Any):
-        images, poses, intrinsics, lines, vps, endpoint = batch
-        Ps = SE3(poses)
-        
-        pose_preds,pred0_vp,pred1_vp = self.forward(images, lines, endpoint)
-    
-        loss, loss_dict = self.criterion(Ps, pose_preds)
-        
-        # loss, loss_dict = self.Rel_criterion(poses, pose_preds)
 
-        return loss, loss_dict, pose_preds, poses
+    def shared_step(self, batch: Any):
+        images, target = batch
+        # target_poses = SE3(target['poses'])
+        target_poses = target['poses']
+
+        pred_dict = self.forward(images, target)
+
+        vps = rearrange(target['vps'], "b i l c -> i b l c ").contiguous()
+
+        index0 = self.matcher(pred_dict["pred_view0_vps"], vps[0])
+        index1 = self.matcher(pred_dict["pred_view1_vps"], vps[1])
+
+        vp_loss0 = self.vp_criterion(pred_dict["pred_view0_vps"], vps[0], index0)
+        vp_loss1 = self.vp_criterion(pred_dict["pred_view1_vps"], vps[1], index1)
+
+        pred_poses = pred_dict["pred_pose"]
+
+        # loss = (vp_loss0 + vp_loss1)
+        # loss_dict = {'loss_vp0':vp_loss0, 'loss_vp1': vp_loss1}
+
+        loss, loss_dict = self.criterion(target_poses, pred_poses)
+
+        # return loss, loss_dict, pred_poses, target_poses
+        return loss, loss_dict, pred_dict, target
 
     def training_step(self, batch: Any, batch_idx: int):
-        loss, loss_dict, preds, targets = self.shared_step(batch)
-
+        # loss, loss_dict, preds, target_pose = self.shared_step(batch)
+        loss, loss_dict, pred_dict, target = self.shared_step(batch)
+        vps = rearrange(target['vps'], "b i l c -> i b l c ").contiguous()
         # update and log metrics
+        self.log('loss', loss, on_step=True, prog_bar=True)
         self.log("train/loss", loss, on_step=False, on_epoch=True, prog_bar=True)
+        self.log("train/loss_tr", loss_dict["loss_tr"], on_step=False, on_epoch=True, prog_bar=True)
+        self.log("train/loss_rot", loss_dict["loss_rot"], on_step=False, on_epoch=True, prog_bar=True)
+        # self.log("train/loss_vp0", loss_dict["loss_vp0"], on_step=False, on_epoch=True, prog_bar=True)
+        # self.log("train/loss_vp1", loss_dict["loss_vp1"], on_step=False, on_epoch=True, prog_bar=True)
         # self.log("train/acc", acc, on_step=False, on_epoch=True, prog_bar=True)
+        # print("self.global_step",self.global_step)
 
-        # return loss or backpropagation will fail
+        # if self.global_step % 100 == 0:
+        #     print("pred_dict['pred_view0_vps']",pred_dict['pred_view0_vps'])
+        #     self.visualize_image(target,vps[0][0],self.global_step,pred_dict['pred_view0_vps'][0])
+
         return loss
+    
+    def visualize_image(self,target, vps, global_step,pred_vp):
+        img0 = target['org_img0'][0].cpu().numpy()
+        file_dir = os.path.dirname(osp.join('.vis/'))
+        if not os.path.exists(file_dir):
+            os.makedirs(file_dir)
+        plt.figure(figsize=(4,3))
+        plt.imshow(img0, extent=[-320/517.97,320/517.97, -240/517.97, 240/517.97])                 
+        plt.plot((0, vps[0][0]), (0, vps[0][1]), 'r-', alpha=1.0)
+        plt.plot((0, vps[1][0]), (0, vps[1][1]), 'r-', alpha=1.0)
+        plt.plot((0, vps[2][0]), (0, vps[2][1]), 'r-', alpha=1.0)
+        plt.plot((0, pred_vp[0][0]), (0, pred_vp[0][1]), 'g-', alpha=1.0)
+        plt.plot((0, pred_vp[1][0]), (0, pred_vp[1][1]), 'g-', alpha=1.0)
+        plt.plot((0, pred_vp[2][0]), (0, pred_vp[2][1]), 'g-', alpha=1.0)
+        #plt.plot((0, pred_vp1[0]), (0, pred_vp1[1]), 'g-', alpha=1.0)  
+        plt.xlim(-320/517.97,320/517.97)
+        plt.ylim(-240/517.97,240/517.97)
+        #plt.axis('off')
+        plt.savefig(osp.join(file_dir,str(global_step)+'jpg'),
+                    pad_inches=0, bbox_inches='tight')
+        plt.close('all')
+
 
     def train_epoch_end(self, outputs: List[Any]):
-        pass
+        for name, param in self.named_parameters():
+            if param.requires_grad:
+                print(name, param.grad)
 
     def validation_step(self, batch: Any, batch_idx: int):
-        loss, loss_dict, preds, targets = self.shared_step(batch)
+        loss, loss_dict, pred_dict, target = self.shared_step(batch)
 
         # update and log metrics
         self.log("val/loss", loss, on_step=False, on_epoch=True, prog_bar=True)
+        # self.log("val/loss_vp0", loss_dict["loss_vp0"], on_step=False, on_epoch=True, prog_bar=True)
+        # self.log("val/loss_vp1", loss_dict["loss_vp1"], on_step=False, on_epoch=True, prog_bar=True)
+        self.log("val/loss_tr", loss_dict["loss_tr"], on_step=False, on_epoch=True, prog_bar=True)
+        self.log("val/loss_rot", loss_dict["loss_rot"], on_step=False, on_epoch=True, prog_bar=True)
         # self.log("val/acc", acc, on_step=False, on_epoch=True, prog_bar=True)
+
+        # visualization
+        # if batch_idx == 0:
+        #     images, poses, *rest = batch
+
+        #     src_image = convert_tensor_to_cv_image(images[0, 0])
+        #     dst_image = convert_tensor_to_cv_image(images[0, 1])
+
+        #     target_rel_pose = convert_tensor_to_numpy_array(target[0, 1])
+        #     pred_rel_pose = convert_tensor_to_numpy_array(preds[0, 1].data)
+
+        #     target_epipolar_image = generate_epipolar_image(src_image, dst_image, target_rel_pose)
+        #     pred_epipolar_image = generate_epipolar_image(src_image, dst_image, pred_rel_pose)
+
+        #     epipolar_image = np.concatenate([target_epipolar_image, pred_epipolar_image], axis=0)
+
+        #     # import pdb; pdb.set_trace()
+
+        #     os.makedirs("./output", exist_ok=True)
+        #     epipolar_image_path = os.path.join("./output", f"epipolar_{self.current_epoch:03d}.png")
+        #     cv2.imwrite(epipolar_image_path, epipolar_image)
 
     def validation_epoch_end(self, outputs: List[Any]):
         pass
 
     def test_step(self, batch: Any, batch_idx: int):
-        
-        images, poses, intrinsics, lines, vps, endpoint = batch
-        vps = rearrange(vps, "b i l c -> i b l c ").contiguous()
-    
-        pose_preds,pred0_vp,pred1_vp = self.forward(images, lines, endpoint)
-        
-        index0 = self.matcher(pred0_vp,vps[0])
-        index1 = self.matcher(pred1_vp,vps[1])
+        images, target = batch
+        vps = rearrange(target['vps'], "b i l c -> i b l c ").contiguous()
 
-        vp_loss0 = self.vp_criterion(pred0_vp,vps[0],index0)
-        vp_loss1 = self.vp_criterion(pred1_vp,vps[1],index1)
-        
+        pred_dict = self.forward(images, target)
+
+        index0 = self.matcher(pred_dict["pred_view0_vps"], vps[0])
+        index1 = self.matcher(pred_dict["pred_view1_vps"], vps[1])
+
+        vp_loss0 = self.vp_criterion(pred_dict["pred_view0_vps"], vps[0], index0)
+        vp_loss1 = self.vp_criterion(pred_dict["pred_view1_vps"], vps[1], index1)
+
         self.vp_loss0.append(vp_loss0.tolist())
         self.vp_loss1.append(vp_loss1.tolist())
 
-        predictions = self.test_camera(poses, pose_preds,self.predictions)
+        predictions = self.test_camera(target['poses'], pred_dict["pred_pose"], self.predictions)
 
-        return predictions,self.vp_loss0,self.vp_loss1
+        return predictions, self.vp_loss0, self.vp_loss1
 
     def test_epoch_end(self, outputs: List[Any]):
         predictions = outputs[0][0]
         vp_loss0 = outputs[0][1]
         vp_loss1 = outputs[0][2]
-        print("vploss0 average loss : ",sum(vp_loss0)/len(vp_loss0))
-        print("vploss0 max loss : ",max(vp_loss0))
-        print("vploss0 min loss : ",min(vp_loss0))
-        print("vploss1 average loss : ",sum(vp_loss1)/len(vp_loss1))
-        print("vploss1 max loss : ",max(vp_loss1))
-        print("vploss1 min loss : ",min(vp_loss1))
+        print("vp0 average loss : ", sum(vp_loss0) / len(vp_loss0))
+        print("vp0 max loss : ", max(vp_loss0))
+        print("vp0 min loss : ", min(vp_loss0))
+        print("vp1 average loss : ", sum(vp_loss1) / len(vp_loss1))
+        print("vp1 max loss : ", max(vp_loss1))
+        print("vp1 min loss : ", min(vp_loss1))
         camera_metrics = self.eval_camera(predictions)
-        
-        
+
         for k in camera_metrics:
             print(k, camera_metrics[k])
-
 
     def configure_optimizers(self):
         """Choose what optimizers and learning-rate schedulers to use in your optimization.

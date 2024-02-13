@@ -27,9 +27,15 @@ class VpLoss(Callable):
 
         src_idx = self._get_src_permutation_idx(indices)
         tgt_idx = self._get_tgt_permutation_idx(indices)
-
-        cos_sim = F.cosine_similarity(pred_vp[src_idx], tgt_vp[tgt_idx], dim=-1).abs()    
+        cos_sim = F.cosine_similarity(pred_vp[src_idx], tgt_vp[tgt_idx], dim=-1)#.abs()  
         losses = (1.0 - cos_sim).mean()
     
         return losses
+    
+# class line_classification_loss(Callable):
+#     def __init__(self):
+#         super().__init__()
+
+#     def __call__(self, outputs, targets,indices):
+
 

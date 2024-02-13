@@ -28,6 +28,7 @@ class MatterportDatamodule(LightningDataModule):
 
         self.train_dataset: Optional[Dataset] = None
         self.val_dataset: Optional[Dataset] = None
+        self.test_dataset: Optional[Dataset] = None
 
     def setup(self, stage: Optional[str] = None):
         """Load data. Set variables: `self.data_train`, `self.data_val`, `self.data_test`.
@@ -47,7 +48,7 @@ class MatterportDatamodule(LightningDataModule):
         elif stage == "test":
             self.test_dataset = hydra.utils.instantiate(
                 self.dataset,
-                ann_filename= self.test_ann_filename
+                ann_filename=self.test_ann_filename
             )
         else:
             raise f"[{stage}] is not support yet!"

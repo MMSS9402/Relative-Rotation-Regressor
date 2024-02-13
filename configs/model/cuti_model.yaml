@@ -19,7 +19,7 @@ ctrlc:
       NUM_QUERIES: 3
       PRE_NORM: False
 
-ctrlc_checkpoint_path: "/home/kmuvcl/source/oldCuTi/CuTi/checkpoint/checkpoint0099.pth"
+ctrlc_checkpoint_path: "/home/kmuvcl/CTRL-C/matterport_log/checkpoint0069.pth"
 
 pos_encoder:
   _target_: src.models.components.position_encoding.PositionEncodingSine1D
@@ -30,29 +30,33 @@ transformer:
   _target_: src.models.components.transformer.LocalFeatureTransformer
   d_model: 256 #512
   nhead: 8
-  layer_types: ["self", "cross"]
+  layer_types: ["self", "cross", "self", "cross", "self", "cross"]
   attention: "linear"
 
-max_num_line: 512
+vptransformer:
+  _target_: src.models.components.vp_transformer.VPTransformer
+  d_model: 256 #512
+  nhead: 8
+  layer_types: ["vpcross"]
+  attention: "bilinear"
+
+max_num_line: 512 #250
 hidden_dim: 256 #512
 pool_channels: [32, 16]
 pose_regressor_hidden_dim: 256
 pose_size: 7
 
 criterion:
-  _target_: src.models.components.losses.GeodesicLoss
+#  _target_: src.models.components.losses.GeodesicLoss,src.models.components.losses.L1Loss
+  _target_: src.models.components.losses.L1Loss
   weights:
     translation: 10.0
     rotation: 10.0
+    vp: 10.0
 
 vp_criterion:
   _target_: src.models.components.vp_loss.VpLoss
 
-Rel_criterion:
-  _target_: src.models.components.losses_non_geodesic.RelPoseLoss
-  weights:
-    translation: 10.0
-    rotation: 10.0
 
 test_metric:
   _target_: src.models.components.testfunction.Testcamera
@@ -65,9 +69,9 @@ matcher:
   
 
 optimizer:
-  _target_: torch.optim.AdamW
-  lr: 1e-5
-  weight_decay: 1e-5
+  _target_: torch.optim.Adam
+  lr: 1e-4
+  weight_decay: 1e-4
 
 scheduler:
   _target_: torch.optim.lr_scheduler.ReduceLROnPlateau
