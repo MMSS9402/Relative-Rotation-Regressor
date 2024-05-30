@@ -1,5 +1,5 @@
 # Relative Rotation Regressor
-[Paper.]([https://github.com/jinlinyi/SparsePlanes/blob/main/docs/data.md](https://kookmin.dcollection.net/public_resource/pdf/200000737077_20240530151846.pdf))
+[Paper.](https://kookmin.dcollection.net/public_resource/pdf/200000737077_20240530151846.pdf)
 - This deep learning model estimates the relative rotation between two images.
 - The model estimates the relative rotation between two images through vanishing point estimation under the Manhattan assumption.
 - 
