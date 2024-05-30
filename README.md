@@ -1,4 +1,6 @@
-# CuTi
+# Relative Rotation Regressor
+
+
 
 ## installation
 ```shell
